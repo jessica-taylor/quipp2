@@ -10,9 +10,49 @@ getType (DoubleValue _) = DoubleType
 data ExpFam = ExpFam {
   expFamD :: Int,
   expFamSufStat :: Value -> [Double],
-  expFamG :: [Double] -> Double,
-  expFamGradG :: [Double] -> [Double]
+  expFamG :: forall s. Mode s => AD s Double -> AD s Double
 }
+
+rowMatrix :: [Double] -> Mat Double
+rowMat row = Mat.fromList [row]
+
+colMat :: [Double] -> Mat Double
+colMat col = Mat.fromList (map return col)
+
+outerProduct :: [Double] -> [Double] -> Mat Double
+outerProduct a b = Mat.times (col a) (row b)
+
+flatMatrix :: Mat Double -> [Double]
+flatMatrix = concat . Mat.toList
+
+splitListIntoBlocks :: Int -> [a] -> [[a]]
+splitListIntoBlocks _ [] = []
+splitListIntoBlocks n lst = take n lst : splitListIntoBlocks n (drop n lst)
+
+matrixWithSize :: Int -> Int -> [Double] -> Mat Double
+matrixWithSize rows cols lst
+  | rows * cols != length lst = error "Bad call to matrixWithSize"
+  | otherwise = Mat.fromList (splitListIntoBlocks cols lst)
+
+matMulByVector :: Mat a -> [Double] -> [Double]
+matMulByVector m = flatMatrix . Mat.toList . Mat.mul m . colMat
+
+dotProduct :: Num a => [a] -> [a] -> a
+dotProduct x y = sum (zipWith (+) x y)
+
+adMatMulByVector :: Num a => [a] -> [a] -> [a]
+adMatMulByVector mat vec = map (dotProduct vec) (splitListIntoBlocks (length mat `div` length vec) mat)
+
+expFamMLE :: ExpFam -> [([Double], [Double])] -> [Double] -> [Double]
+expFamMLE fam samples etaStart =
+  let n = length samples
+      lenFeatures = let (features, _):_ = samples in length features
+      outerProducts = map (flatMatrix . uncurry (flip outerProduct)) samples
+      outerProductVariance = map variance (transpose outerProducts)
+      indepGrad = map sum (transpose outerProducts)
+      sampleProb eta (features, ss) = dotProduct np ss + expFamG fam np
+        where np = adMatMulByVector eta features
+      f eta = sum (map (sampleProb eta) samples)
 
 data Likelihood = KnownValue Value | NatParam [Double]
 
