@@ -10,7 +10,7 @@ getType (DoubleValue _) = DoubleType
 data ExpFam = ExpFam {
   expFamD :: Int,
   expFamSufStat :: Value -> [Double],
-  expFamG :: forall s. Mode s => AD s Double -> AD s Double
+  expFamG :: forall s. Mode s => [AD s Double] -> AD s Double
 }
 
 rowMatrix :: [Double] -> Mat Double
@@ -43,16 +43,26 @@ dotProduct x y = sum (zipWith (+) x y)
 adMatMulByVector :: Num a => [a] -> [a] -> [a]
 adMatMulByVector mat vec = map (dotProduct vec) (splitListIntoBlocks (length mat `div` length vec) mat)
 
+newtonMethodStep :: ([Double] -> ([Double], [[Double]])) -> [Double] -> [Double]
+newtonMethodStep f x =
+  let (grad, hess) = f x
+      xnt = map (0-) $ matMulByVector (Mat.inv $ Mat.fromList hess) grad
+  in zipWith (+) x xnt
+
+newtonMethod :: ([Double] -> ([Double, Mat Double)) -> [Double] -> [[Double]]
+newtonMethod f = iterate (newtonMethodStep f)
+
 expFamMLE :: ExpFam -> [([Double], [Double])] -> [Double] -> [Double]
 expFamMLE fam samples etaStart =
-  let n = length samples
-      lenFeatures = let (features, _):_ = samples in length features
-      outerProducts = map (flatMatrix . uncurry (flip outerProduct)) samples
-      outerProductVariance = map variance (transpose outerProducts)
-      indepGrad = map sum (transpose outerProducts)
+  let -- n = length samples
+      -- lenFeatures = let (features, _):_ = samples in length features
+      -- outerProducts = map (flatMatrix . uncurry (flip outerProduct)) samples
+      -- outerProductVariance = map variance (transpose outerProducts)
+      -- indepGrad = map sum (transpose outerProducts)
       sampleProb eta (features, ss) = dotProduct np ss + expFamG fam np
         where np = adMatMulByVector eta features
       f eta = sum (map (sampleProb eta) samples)
+  in newtonMethod (\eta -> (grad f eta, hess f eta)) !! 10
 
 data Likelihood = KnownValue Value | NatParam [Double]
 
