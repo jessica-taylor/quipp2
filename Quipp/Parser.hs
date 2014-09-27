@@ -1,8 +1,8 @@
-module Parser where
+module Quipp.Parser where
 
 import Data.Char
 import Text.Parsec.Char
-import Text.Parsec.Combinators
+import Text.Parsec.Combinator
 import Text.Parsec.Prim
 
 

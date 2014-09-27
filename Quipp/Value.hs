@@ -1,4 +1,4 @@
-module Value (Value) where
+module Quipp.Value (Value) where
 
 
 data Type = DoubleType deriving (Eq, Ord, Show)
