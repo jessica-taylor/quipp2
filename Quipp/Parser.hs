@@ -1,5 +1,7 @@
+{-# LANGUAGE NoMonomorphismRestriction #-}
 module Quipp.Parser where
 
+import Control.Applicative ((<$>), (<*>))
 import Data.Char
 import Text.Parsec.Char
 import Text.Parsec.Combinator
@@ -7,8 +9,6 @@ import Text.Parsec.Prim
 
 
 data TypeExpr = ConstructorTypeExpr String | AppTypeExpr TypeExpr TypeExpr | VarTypeExpr String
-
-data Expr = VarExpr String | 
 
 wordChar = satisfy (\x -> isAlphaNum x || x == '_')
 
@@ -22,7 +22,7 @@ a ^>> b = do
   b
   return x
 
-withWhitespace p = p ^>> many (satisfy isWhitespace)
+withWhitespace p = p ^>> spaces
 
 upperId = withWhitespace ((:) <$> satisfy isUpper <*> many wordChar)
 lowerId = withWhitespace $ do
@@ -31,7 +31,7 @@ lowerId = withWhitespace $ do
 
 withParens p = withWhitespace (string "(") >> p ^>> withWhitespace (string ")")
 
-atomType = withParens anyType <|> fmap VarTypeExpr lowerId <|> fmap ConstructorTypeExpr upperId
+-- atomType = withParens anyType <|> fmap VarTypeExpr lowerId <|> fmap ConstructorTypeExpr upperId
 
 
 

@@ -5,6 +5,7 @@ import Data.Foldable (foldlM)
 import Data.List (elemIndex)
 import Data.Map (Map, (!))
 import qualified Data.Map as Map
+import Data.Maybe (fromJust)
 
 import Quipp.ExpFam
 import Quipp.Factor
@@ -19,19 +20,20 @@ varExpSufStat graph state varid =
   expSufStat (fst (factorGraphVars graph ! varid)) (state ! varid)
 
 
-newVarLikelihood :: FactorGraph v -> VmpState v -> VarId -> Maybe (Likelihood v)
+newVarLikelihood :: Eq v => FactorGraph v -> VmpState v -> VarId -> Maybe (Likelihood v)
 newVarLikelihood graph state varid =
   let (_, fids) = factorGraphVars graph ! varid
       fnp (factor, varids) =
-        factorNatParam (elemIndex varid varids) $ map (varExpSufStat graph state) varids
-  in productLikelihoods $ map (fnp . (factorGraphVars graph !)) fids
+        factorNatParam factor (fromJust $ elemIndex varid varids) $ map (varExpSufStat graph state) varids
+  in productLikelihoods $ map (fnp . (factorGraphFactors graph !)) fids
 
 
-updateVar :: FactorGraph v -> VmpState v -> VarId -> Maybe (VmpState v)
-updateVar graph state varid =
-  Map.insert varid <$> newVarLikelihood graph state varid <*> state
+updateVar :: Eq v => FactorGraph v -> VmpState v -> VarId -> Maybe (VmpState v)
+updateVar graph state varid = do
+  likelihood <- newVarLikelihood graph state varid
+  return $ Map.insert varid likelihood state
 
-stepVmpState :: FactorGraph v -> VmpState v -> Maybe (VmpState v)
+stepVmpState :: Eq v => FactorGraph v -> VmpState v -> Maybe (VmpState v)
 stepVmpState graph state =
-  foldlM (\st varid -> updateVar varid graph st) state (Map.keys $ factorGraphVars graph)
+  foldlM (\st varid -> updateVar graph st varid) state (Map.keys $ factorGraphVars graph)
 
