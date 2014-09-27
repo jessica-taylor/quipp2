@@ -1,15 +1,8 @@
 
 
-data Type = DoubleType deriving (Eq, Ord, Show)
-
-data Value = DoubleValue Double deriving (Eq, Ord, Show)
-
-getType :: Value -> Type
-getType (DoubleValue _) = DoubleType
-
-data ExpFam = ExpFam {
+data ExpFam v = ExpFam {
   expFamD :: Int,
-  expFamSufStat :: Value -> [Double],
+  expFamSufStat :: v -> [Double],
   expFamG :: forall s. Mode s => [AD s Double] -> AD s Double
 }
 
@@ -52,7 +45,7 @@ newtonMethodStep f x =
 newtonMethod :: ([Double] -> ([Double, Mat Double)) -> [Double] -> [[Double]]
 newtonMethod f = iterate (newtonMethodStep f)
 
-expFamMLE :: ExpFam -> [([Double], [Double])] -> [Double] -> [Double]
+expFamMLE :: ExpFam a -> [([Double], [Double])] -> [Double] -> [Double]
 expFamMLE fam samples etaStart =
   let -- n = length samples
       -- lenFeatures = let (features, _):_ = samples in length features
@@ -64,85 +57,91 @@ expFamMLE fam samples etaStart =
       f eta = sum (map (sampleProb eta) samples)
   in newtonMethod (\eta -> (grad f eta, hess f eta)) !! 10
 
-data Likelihood = KnownValue Value | NatParam [Double]
+data Likelihood v = KnownValue v | NatParam [Double]
 
-timesLikelihood :: Likelihood -> Likelihood -> Maybe Likelihood
+timesLikelihood :: Likelihood v -> Likelihood v -> Maybe (Likelihood v)
 timesLikelihood (KnownValue v1) (KnownValue v2) =
   if v1 == v2 then Just (KnownValue v1) else Nothing
 timesLikelihood (KnownValue v1) (NatParam _) = KnownValue v1
 timesLikelihood (NatParam _) (KnownValue v2) = KnownValue v2
 timesLikelihood (NatParam n1) (NatParam n2) = NatParam (zipWith (+) n1 n2)
 
-productLikelihoods :: [Likelihood] -> Maybe Likelihood
+productLikelihoods :: [Likelihood v] -> Maybe (Likelihood v)
 productLikelihoods (l:ls) = foldlM timesLikelihood l ls
 
-expSufStat :: ExpFam -> Likelihood -> [Double]
+expSufStat :: ExpFam v -> Likelihood v -> [Double]
 expSufStat ef (KnownValue v) = expFamSufStat ef v
 expSufStat ef (NatParam np) = expFamGradG ef np
 
-data Factor = Factor {
-  factorExpFams :: [ExpFam],
-  factorValue :: [[Double]] -> Double,
-  factorNatParam :: Int -> [[Double]] -> Likelihood
-}
-
-mkExpFam :: [Value -> Double] -> ExpFam
+mkExpFam :: [v -> Double] -> ExpFam v
 mkExpFam fs = ExpFam {
   expFamD = length fs,
   expFamSufStat = \v -> map ($ v) fs
+}
 
 negInfinity :: Double
 negInfinity = read "-inf"
 
-constFactor :: ExpFam -> Value -> Factor
+
+
+data Factor v = Factor {
+  factorExpFams :: [ExpFam v],
+  factorValue :: [[Double]] -> Double,
+  factorNatParam :: Int -> [[Double]] -> Likelihood v
+}
+
+constFactor :: Eq v => ExpFam v -> v -> Factor
 constFactor ss x = Factor {
   factorExpFams = [ss],
   factorValue = \[s] -> if ssv == s then 0 else negInfinity,
   factorNatParam = \0 [_] -> KnownValue x
 } where ssv = expFamSufStat ss x
 
-gaussianExpFam :: ExpFam
-gaussianExpFam = mkExpFam [\DoubleValue x -> x, \DoubleValue x -> x^2]
+gaussianExpFam :: ExpFam Double
+gaussianExpFam = mkExpFam [id, (^2)]
 
-gammaExpFam :: ExpFam
-gammaExpFam = mkExpFam [\DoubleValue x -> x, \DoubleValue x -> log x]
+gammaExpFam :: ExpFam Double
+gammaExpFam = mkExpFam [id, log]
 
-gaussianFactor :: Factor
+gaussianFactor :: Factor Double
 gaussianFactor =
   Factor {
     factorExpFams = [gaussianExpFam, gaussianExpFam, gammaExpFam],
     factorValue = \[[x, x2], [mu, mu2], [prec, logprec]] ->
-      (x2 + mu2 - 2*x*mu) * prec / 2
+      -(x2 + mu2 - 2*x*mu) * prec / 2
     factorNatParam = fnp
   }
   where
-    fnp 0 [_, [mu, mu2], [prec, logprec]] = [, ???]
+    fnp 0 [_, [mu, mu2], [prec, logprec]] = [2*mu * prec/2, -prec/2]
+    fnp 1 [[x, x2], _, [prec, logprec]] = [2*x * prec/2, -prec/2]
+    fnp 2 [[x, x2], [mu, mu2], _] = [-(x2 + mu2 - 2 * x * mu)/2, 0]
 
 type VarId = Int
 type FactorId = Int
 
-data FactorGraph = FactorGraph {
-  factorGraphVars :: Map VarId (ExpFam, [FactorId]),
-  factorGraphFactors :: Map FactorId (Factor, [VarId])
+data FactorGraph v = FactorGraph {
+  factorGraphVars :: Map VarId (ExpFam v, [FactorId]),
+  factorGraphFactors :: Map FactorId (Factor v, [VarId])
 }
 
-type VmpState = Map VarId Likelihood
+type VmpState v = Map VarId (Likelihood v)
 
-expSufStat :: VarId -> FactorGraph -> VmpState -> [Double]
+expSufStat :: VarId -> FactorGraph v -> VmpState v -> [Double]
 expSufStat varid graph state =
   expFamGradG (fst (factorGraphVars graph ! varid)) (state ! varid)
-  
 
-newVarLikelihood :: VarId -> FactorGraph -> VmpState -> Likelihood
+
+newVarLikelihood :: VarId -> FactorGraph v -> VmpState v -> Maybe (Likelihood v)
 newVarLikelihood varid graph state =
   let (_, fids) = graph ! varid
       fnp (factor, varids) =
-        factorNatParam (elemIndex varid varids) (map (...))
-      natparams = map (fnp . (factorGraphVars graph !)) fids
-  
-
-updateVar :: VarId -> VmpState -> VmpState
-updateVar varid state =
-  
+        factorNatParam (elemIndex varid varids) [varExpSufStat varid graph state | varid <- varids]
+  in productLikelihoods $ map (fnp . (factorGraphVars graph !)) fids
 
 
+updateVar :: VarId -> FactorGraph v -> VmpState v -> Maybe (VmpState v)
+updateVar varid graph state =
+  insert varid <$> newVarLikelihood varid graph state <*> state
+
+stepState :: FactorGraph v -> VmpState v -> Maybe (VmpState v)
+stepState graph state = foldlM (\st varid -> updateVar varid graph st) state (Map.keys $ factorGraphVars graph)
