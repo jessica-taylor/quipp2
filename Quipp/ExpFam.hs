@@ -1,4 +1,4 @@
-{-# LANGUAGE RankNTypes, TypeFamilies #-}
+{-# LANGUAGE RankNTypes, TypeFamilies, NoMonomorphismRestriction #-}
 
 module Quipp.ExpFam (ExpFam(ExpFam, expFamD, expFamSufStat, expFamG, expFamSample),
                      promoteExpFam, expFamMLE,
@@ -6,6 +6,7 @@ module Quipp.ExpFam (ExpFam(ExpFam, expFamD, expFamSufStat, expFamG, expFamSampl
                      timesLikelihood, productLikelihoods, expSufStat,
                      gaussianExpFam, gammaExpFam) where
 
+import Debug.Trace
 import Control.Monad (liftM)
 import Control.Monad.State.Lazy (State)
 import Data.Foldable (foldlM)
@@ -15,10 +16,12 @@ import Numeric.AD (AD, Mode, Scalar, grad, hessian, auto)
 import Numeric.Matrix (Matrix)
 import qualified Numeric.Matrix as Mat
 
+
+
 data ExpFam v = ExpFam {
   expFamD :: Int,
   expFamSufStat :: v -> [Double],
-  expFamG :: forall s. (Mode s, Scalar s ~ Double) => [s] -> s,
+  expFamG :: forall s. (Real s, Floating s, Mode s, Scalar s ~ Double) => [s] -> s,
   expFamSample :: forall g. RandomGen g => State g v
 }
 
@@ -58,30 +61,35 @@ dotProduct :: Num a => [a] -> [a] -> a
 dotProduct x y = sum (zipWith (+) x y)
 
 adMatMulByVector :: Num a => [a] -> [a] -> [a]
-adMatMulByVector mat vec = map (dotProduct vec) (splitListIntoBlocks (length mat `div` length vec) mat)
+adMatMulByVector mat vec = map (dotProduct vec) (splitListIntoBlocks (length vec) mat)
+
+-- fixZeroRowCols :: Matrix Double -> Matrix Double
+-- fixZeroRowCols mat =
+--   let isZeroRowCol i = all (== 0.0) (Mat.row i mat ++ Mat.col i mat)
+--   in mat + Mat.diag [if isZeroRowCol i then 1.0 else 0.0 | i <- [1 .. Mat.numRows mat]]
 
 newtonMethodStep :: ([Double] -> ([Double], Matrix Double)) -> [Double] -> [Double]
 newtonMethodStep f x =
-  let (grad, hess) = f x
-      xnt = map (0-) $ matMulByVector (fromJust $ Mat.inv hess) grad
-  in zipWith (+) x xnt
+  let (grad, hess) = f x in case Mat.inv (fixZeroRowCols hess) of
+    Nothing -> error ("Bad Hessian: " ++ show hess)
+    Just invHess -> zipWith (-) x $ matMulByVector invHess grad
 
 newtonMethod :: ([Double] -> ([Double], Matrix Double)) -> [Double] -> [[Double]]
 newtonMethod f = iterate (newtonMethodStep f)
 
-expFamMLE :: ExpFam a -> [([Double], [Double])] -> [Double] -> [Double]
+expFamMLE :: ExpFam a -> [([Double], [Double])] -> [Double] -> [[Double]]
 expFamMLE fam samples etaStart =
   let -- n = length samples
       -- lenFeatures = let (features, _):_ = samples in length features
       -- outerProducts = map (flatMatrix . uncurry (flip outerProduct)) samples
       -- outerProductVariance = map variance (transpose outerProducts)
       -- indepGrad = map sum (transpose outerProducts)
-      sampleProb :: (Mode m, Scalar m ~ Double) => [m] -> ([Double], [Double]) -> m
-      sampleProb eta (features, ss) = dotProduct np (map auto ss) + expFamG fam np
+      sampleProb :: (Real m, Floating m, Mode m, Scalar m ~ Double) => [m] -> ([Double], [Double]) -> m
+      sampleProb eta (features, ss) = dotProduct np (map auto ss) - expFamG fam np
         where np = adMatMulByVector eta (map auto features)
-      f :: (Mode m, Scalar m ~ Double) => [m] -> m
+      f :: (Real m, Floating m, Mode m, Scalar m ~ Double) => [m] -> m
       f eta = sum (map (sampleProb eta) samples)
-  in newtonMethod (\eta -> (grad f eta, Mat.fromList $ hessian f eta)) etaStart !! 10
+  in newtonMethod (\eta -> (grad f eta, Mat.fromList $ hessian f eta)) etaStart
 
 data Likelihood v = KnownValue v | NatParam [Double]
 
@@ -103,17 +111,34 @@ expSufStat :: ExpFam v -> Likelihood v -> [Double]
 expSufStat ef (KnownValue v) = expFamSufStat ef v
 expSufStat ef (NatParam np) = grad (expFamG ef) np
 
-mkExpFam :: [v -> Double] -> ExpFam v
-mkExpFam fs = ExpFam {
+mkExpFam :: [v -> Double] -> (forall s. (Real s, Floating s, Mode s, Scalar s ~ Double) => [s] -> s) -> ExpFam v
+mkExpFam fs g = ExpFam {
   expFamD = length fs,
-  expFamSufStat = \v -> map ($ v) fs
+  expFamSufStat = \v -> map ($ v) fs,
+  expFamG = g,
+  expFamSample = undefined
 }
 
 negInfinity :: Double
 negInfinity = read "-Infinity"
 
 gaussianExpFam :: ExpFam Double
-gaussianExpFam = mkExpFam [id, (^2)]
+gaussianExpFam = mkExpFam [id, (^2)] g
+  where g :: (Floating a, Mode a, Real a) => [a] -> a
+        g [n1, n2] | n2 >= 0 = 0/0
+                   | otherwise = let variance = -1 / (2 * n2)
+                                     mean = n1 * variance
+                                 in log (2 * pi * variance) / 2 + mean^2/(2 * variance)
+        g x = error (show $ map toRational x)
+
+-- function log_gamma(xx)
+-- {
+--     var x = xx - 1.0;
+--     var tmp = x + 5.5; tmp -= (x + 0.5)*Math.log(tmp);
+--     var ser=1.000000000190015;
+--     for (j=0;j<=5;j++){ x++; ser += cof[j]/x; }
+--     return -tmp+Math.log(2.5066282746310005*ser);
+-- }
 
 gammaExpFam :: ExpFam Double
-gammaExpFam = mkExpFam [id, log]
+gammaExpFam = mkExpFam [id, log] undefined
