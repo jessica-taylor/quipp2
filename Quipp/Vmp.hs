@@ -37,3 +37,4 @@ stepVmpState :: Eq v => FactorGraph v -> VmpState v -> Maybe (VmpState v)
 stepVmpState graph state =
   foldlM (\st varid -> updateVar graph st varid) state (Map.keys $ factorGraphVars graph)
 
+

@@ -25,7 +25,8 @@ library
     ad >= 4.2,
     random >= 1.0.1,
     mtl >= 1.1.0,
-    bed-and-breakfast >= 0.5,
+    -- bed-and-breakfast >= 0.5,
+    hmatrix >= 0.16,
     parsec >= 3.1
 
   -- hs-source-dirs:      

@@ -43,6 +43,16 @@ gaussianFactor =
     fnp 1 [[x, x2], _, [prec, logprec]] = [2*x * prec/2, -prec/2]
     fnp 2 [[x, x2], [mu, mu2], _] = [-(x2 + mu2 - 2 * x * mu)/2, 0]
 
+expFamFactor :: ExpFam v -> [ExpFam v] -> [Double] -> Factor v
+expFamFactor ef featureExpFams eta =
+  Factor {
+    factorExpFams = ef:featureExpFams,
+    factorLogValue = \(ss:features) -> expFamProb ef (concat features) ss,
+    factorNatParam = fnp
+  }
+  where fnp 0 (_:features) = linearMatMulByVector eta (concat features)
+        fnp n (ss:features) = 
+
 type VarId = Int
 type FactorId = Int
 
