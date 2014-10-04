@@ -1,6 +1,6 @@
 {-# LANGUAGE RankNTypes, TypeFamilies, NoMonomorphismRestriction #-}
 
-module Quipp.ExpFam (ExpFam(ExpFam, expFamD, expFamSufStat, expFamG, expFamSample),
+module Quipp.ExpFam (ExpFam(ExpFam, expFamD, expFamSufStat, expFamG, expFamSample, expFamDefaultNatParam),
                      promoteExpFam, expFamLogProbability, expFamMLE,
                      Likelihood(KnownValue, NatParam), promoteLikelihood, negInfinity,
                      timesLikelihood, productLikelihoods,
@@ -22,7 +22,9 @@ data ExpFam v = ExpFam {
   expFamD :: Int,
   expFamSufStat :: v -> [Double],
   expFamG :: forall s. (RealFloat s, Mode s, Scalar s ~ Double) => [s] -> s,
-  expFamSample :: [Double] -> RVar v
+  expFamSample :: [Double] -> RVar v,
+  expFamDefaultNatParam :: [Double],
+  expFamFeaturesMask :: [Bool]
 }
 
 promoteExpFam :: (v -> u, u -> v) -> ExpFam v -> ExpFam u
@@ -30,7 +32,9 @@ promoteExpFam (f, finv) ef = ExpFam {
   expFamD = expFamD ef,
   expFamSufStat = expFamSufStat ef . finv,
   expFamG = expFamG ef,
-  expFamSample = liftM f . expFamSample ef
+  expFamSample = liftM f . expFamSample ef,
+  expFamDefaultNatParam = expFamDefaultNatParam ef,
+  expFamFeaturesMask = expFamFeaturesMask ef
 }
 
 lineSearch :: ([Double] -> Double) -> [Double] -> [Double] -> [Double]
@@ -38,7 +42,7 @@ lineSearch f x dir =
   let points = [zipWith (+) x (map (/ 2^t) dir) | t <- [0 ..]] in
   case filter (\x' -> f x' >= f x) $ take 100 points of
     x':_ -> x'
-    [] -> x
+    [] -> error ("Found nothing better. f x = " ++ show (f x :: Double)) -- x
 
 newtonMethodStep :: ([Double] -> (Double, [Double], Matrix Double)) -> [Double] -> [Double]
 newtonMethodStep f x =
@@ -53,15 +57,17 @@ traced label fn a = trace (const "" $ "\n" ++ label ++ ": " ++ show (fn a) ++ "\
 
 ratNum = (fromRational :: Rational -> Double) . toRational
 
-expFamLogProbability :: (RealFloat m, Mode m, Scalar m ~ Double) => ExpFam v -> [m] -> [Double] -> [Double] -> m
+expFamLogProbability :: (RealFloat m, Mode m, Scalar m ~ Double) => ExpFam v -> Matrix m -> [Double] -> [Double] -> m
 expFamLogProbability fam eta features ss = dotProduct np (map auto ss) - expFamG fam np
-  where np = linearMatMulByVector eta (map auto features)
+  where np = matMulByVector eta (map auto features)
 
-expFamMLE :: ExpFam a -> [([Double], [Double])] -> [Double] -> [[Double]]
+expFamMLE :: ExpFam a -> [([Double], [Double])] -> Matrix Double -> [Matrix Double]
 expFamMLE fam samples etaStart =
-  let f :: (RealFloat m, Mode m, Scalar m ~ Double) => [m] -> m
-      f eta = sum (map (uncurry $ expFamLogProbability fam eta) samples)
-  in newtonMethod (\eta -> (f eta, grad f eta, hessian f eta)) etaStart
+  let numFeatures = length $ fst samples
+      toMat = splitListIntoBlocks numFeatures
+      f :: (RealFloat m, Mode m, Scalar m ~ Double) => [m] -> m
+      f eta = sum (map (uncurry $ expFamLogProbability fam $ toMat eta) samples)
+  in map toMat $ newtonMethod (\eta -> (f eta, grad f eta, hessian f eta)) $ concat etaStart
 
 data Likelihood v = KnownValue v | NatParam [Double] deriving (Eq, Ord, Show)
 
@@ -89,17 +95,18 @@ expSufStat :: ExpFam v -> Likelihood v -> [Double]
 expSufStat ef (KnownValue v) = expFamSufStat ef v
 expSufStat ef (NatParam np) = grad (expFamG ef) np
 
-mkExpFam :: [v -> Double] -> (forall s. (RealFloat s, Mode s, Scalar s ~ Double) => [s] -> s) -> ([Double] -> RVar v) -> ExpFam v
-mkExpFam fs g sample = ExpFam {
+mkExpFam :: [v -> Double] -> (forall s. (RealFloat s, Mode s, Scalar s ~ Double) => [s] -> s) -> ([Double] -> RVar v) -> [Double] -> [Bool] -> ExpFam v
+mkExpFam fs g sample np = ExpFam {
   expFamD = length fs,
   expFamSufStat = \v -> map ($ v) fs,
   expFamG = g,
-  expFamSample = sample
+  expFamSample = sample,
+  expFamDefaultNatParam = np
 }
 
 
 gaussianExpFam :: ExpFam Double
-gaussianExpFam = mkExpFam [id, (^2)] g sample
+gaussianExpFam = mkExpFam [id, (^2)] g sample [0, -0.0001] [True, False]
   where g :: (RealFloat a, Mode a) => [a] -> a
         g [n1, n2] | n2 >= 0 = 0/0
                    | otherwise = let variance = -1 / (2 * n2)
@@ -113,7 +120,7 @@ gaussianExpFam = mkExpFam [id, (^2)] g sample
 
 
 categoricalExpFam :: Int -> ExpFam Int
-categoricalExpFam n = mkExpFam (map ss [1 .. n-1]) g sample
+categoricalExpFam n = mkExpFam (map ss [1 .. n-1]) g sample (replicate (n-1) 0) (replicate (n-1) True)
   where ss i x = if x == i then 1.0 else 0.0
         g :: RealFloat a => [a] -> a
         g x | length x == n-1 = logSumExp (0:x)
@@ -131,4 +138,4 @@ categoricalExpFam n = mkExpFam (map ss [1 .. n-1]) g sample
 -- }
 
 gammaExpFam :: ExpFam Double
-gammaExpFam = mkExpFam [id, log] undefined undefined
+gammaExpFam = mkExpFam [id, log] undefined undefined undefined

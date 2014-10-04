@@ -1,8 +1,9 @@
 module Quipp.Util where
 
+import Debug.Trace
 import Data.Random (RVarT, RVar, StdRandom(StdRandom), runRVar)
 import qualified Data.Packed.Matrix as Mat
-import Numeric.LinearAlgebra.Algorithms (linearSolve)
+import Numeric.LinearAlgebra.Algorithms (linearSolve, pinv)
 
 infixr 9 .:
 (f .: g) x y = f (g x y)
@@ -38,9 +39,11 @@ dotProduct x y = sum (zipWith (*) x y)
 matMulByVector :: Num a => Matrix a -> [a] -> [a]
 matMulByVector m v = map (dotProduct v) m
 
-linSolve :: Matrix Double -> [Double] -> [Double]
-linSolve mat d = concat $ Mat.toLists $ linearSolve (Mat.fromLists mat) (Mat.fromLists (map return d))
-
 linearMatMulByVector :: Num a => [a] -> [a] -> [a]
 linearMatMulByVector m v = matMulByVector (splitListIntoBlocks (length v) m) v
+
+linSolve :: Matrix Double -> [Double] -> [Double]
+linSolve mat d = -- traceShow mat $ concat $ Mat.toLists $ linearSolve (Mat.fromLists mat) (Mat.fromLists (map return d))
+  matMulByVector (Mat.toLists $ pinv $ Mat.fromLists mat) d
+
 

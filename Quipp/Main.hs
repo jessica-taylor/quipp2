@@ -1,5 +1,6 @@
 module Quipp.Main where
 
+import Debug.Trace
 import Control.Monad (liftM)
 import Control.Monad.Trans (lift)
 import Data.Maybe (fromJust)
@@ -34,9 +35,9 @@ clusterVars = [(i, categoricalExpFam2) | i <- [0 .. length values - 1]]
 
 valueVars = [(i + length values, gaussianExpFam2) | i <- [0 .. length values - 1]]
 
-gaussianRandFunctions = [(i, gaussianExpFam2, [categoricalExpFam2]) | i <- [0 .. length values - 1]]
+gaussianRandFunctions = [(0, gaussianExpFam2, [categoricalExpFam2])]
 
-gaussianFactorVars = [(i, Right i, [i + length values, i]) | i <- [0 .. length values - 1]]
+gaussianFactorVars = [(i, Right 0, [i + length values, i]) | i <- [0 .. length values - 1]]
 
 constFactorVars = [(i + length values, Left (constFactor gaussianExpFam2 v), [i + length values]) | (i, v) <- zip [0..] values]
 

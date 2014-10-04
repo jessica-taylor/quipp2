@@ -54,11 +54,10 @@ gaussianFactor =
     fnp 1 [[x, x2], _, [prec, logprec]] = [2*x * prec/2, -prec/2]
     fnp 2 [[x, x2], [mu, mu2], _] = [-(x2 + mu2 - 2 * x * mu)/2, 0]
 
-traced x = trace (show x) x
 
 transpose xs = if maximum (map length xs) == 0 then [] else map head xs : transpose (map tail xs)
 
-expFamFactor :: ExpFam v -> [ExpFam v] -> [Double] -> Factor v
+expFamFactor :: ExpFam v -> [ExpFam v] -> Matrix Double -> Factor v
 expFamFactor ef featureExpFams eta
   | length eta /= expFamD ef * (1 + sum (map expFamD featureExpFams)) =
       error "Wrong number of expfam parameters"
@@ -71,10 +70,10 @@ expFamFactor ef featureExpFams eta
   where fnp 0 (_:features) = linearMatMulByVector eta (1:concat features)
         fnp n (ss:features) =
           let allFeatures = 1 : concat features
-              gradProbNp = grad (\np -> dotProduct np (map auto ss) - expFamG ef np) (linearMatMulByVector eta allFeatures)
+              gradProbNp = grad (\np -> dotProduct np (map auto ss) - expFamG ef np) $ matMulByVector eta allFeatures
               minFeatureIndex = sum $ map expFamD $ take (n-1) featureExpFams
               thisArgDim = expFamD (featureExpFams !! (n-1))
-              relevantEta = map (take thisArgDim . drop minFeatureIndex) $ splitListIntoBlocks (length allFeatures) eta
+              relevantEta = map (take thisArgDim . drop minFeatureIndex) eta
           in matMulByVector (transpose relevantEta) gradProbNp
 
 type VarId = Int
@@ -84,11 +83,6 @@ data FactorGraph v = FactorGraph {
   factorGraphVars :: Map VarId (ExpFam v, [FactorId]),
   factorGraphFactors :: Map FactorId (Factor v, [VarId])
 }
-
--- makeFactorGraph :: [(VarId, ExpFam v)] -> [(FactorId, Factor v, [VarId])] -> FactorGraph v
--- makeFactorGraph vars factors = FactorGraph (Map.fromList fgv) (Map.fromList fgf)
---   where fgv = [(varid, (ef, [factorid | (factorid, _, vars) <- factors, elem varid vars])) | (varid, ef) <- vars]
---         fgf = [(factorid, (fac, vars)) | (factorid, fac, vars) <- factors]
 
 type RandFunId = Int
 
@@ -137,7 +131,9 @@ newVarLikelihood graph state varid =
 initTemplateParams :: FactorGraphTemplate v -> FactorGraphParams
 initTemplateParams = fmap getParam . factorGraphTemplateRandFunctions
   where getParam (ef, featureEfs, _) =
-          replicate (expFamD ef * (1 + sum (map expFamD featureEfs))) 0.0
+          concat $ zipWith (:) (expFamDefaultNatParam ef) (repeat $ replicate (sum $ map expFamD featureEfs) 0.0)
+
+traced s x = trace ("\n" ++ s ++ show x) x
 
 updateTemplateParams :: FactorGraphTemplate v -> FactorGraphParams -> FactorGraphState v -> FactorGraphParams
 updateTemplateParams template origParams state = Map.mapWithKey updateParam origParams
@@ -147,6 +143,6 @@ updateTemplateParams template origParams state = Map.mapWithKey updateParam orig
               factorValues factorId =
                 let (_, varids) = factorGraphTemplateFactors template ! factorId
                     ss:fss = map (varExpSufStat origGraph state) varids
-                in (ss, concat fss)
+                in (1 : concat fss, ss)
           in expFamMLE ef (map factorValues factorIds) origParam !! 10
 
