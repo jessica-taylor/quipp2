@@ -63,7 +63,7 @@ expFamLogProbability fam eta features ss = dotProduct np (map auto ss) - expFamG
 
 expFamMLE :: ExpFam a -> [([Double], [Double])] -> Matrix Double -> [Matrix Double]
 expFamMLE fam samples etaStart =
-  let numFeatures = length $ fst samples
+  let numFeatures = length $ fst $ head samples
       toMat = splitListIntoBlocks numFeatures
       f :: (RealFloat m, Mode m, Scalar m ~ Double) => [m] -> m
       f eta = sum (map (uncurry $ expFamLogProbability fam $ toMat eta) samples)
