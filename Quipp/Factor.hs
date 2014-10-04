@@ -1,12 +1,21 @@
+{-# LANGUAGE TupleSections #-}
+
 module Quipp.Factor (
   Factor(Factor, factorExpFams, factorLogValue, factorNatParam),
   promoteFactor, constFactor, gaussianFactor, expFamFactor,
   VarId, FactorId, FactorGraph(FactorGraph, factorGraphVars, factorGraphFactors),
-  makeFactorGraph) where
+  FactorGraphTemplate(FactorGraphTemplate, factorGraphTemplateVars, factorGraphTemplateFactors),
+  makeFactorGraphTemplate, instantiateTemplate,
+  FactorGraphState, initFactorGraphState, varExpSufStat, newVarLikelihood,
+  FactorGraphParams, initTemplateParams, updateTemplateParams) where
 
+import Control.Monad (liftM)
 import Debug.Trace
-import Data.Map (Map)
+import Data.List (elemIndex)
+import Data.Map (Map, (!))
 import qualified Data.Map as Map
+import Data.Maybe (fromJust)
+import Data.Random (RVar)
 import Numeric.AD (grad, auto)
 
 import Quipp.ExpFam
@@ -76,7 +85,68 @@ data FactorGraph v = FactorGraph {
   factorGraphFactors :: Map FactorId (Factor v, [VarId])
 }
 
-makeFactorGraph :: [(VarId, ExpFam v)] -> [(FactorId, Factor v, [VarId])] -> FactorGraph v
-makeFactorGraph vars factors = FactorGraph (Map.fromList fgv) (Map.fromList fgf)
+-- makeFactorGraph :: [(VarId, ExpFam v)] -> [(FactorId, Factor v, [VarId])] -> FactorGraph v
+-- makeFactorGraph vars factors = FactorGraph (Map.fromList fgv) (Map.fromList fgf)
+--   where fgv = [(varid, (ef, [factorid | (factorid, _, vars) <- factors, elem varid vars])) | (varid, ef) <- vars]
+--         fgf = [(factorid, (fac, vars)) | (factorid, fac, vars) <- factors]
+
+type RandFunId = Int
+
+data FactorGraphTemplate v = FactorGraphTemplate {
+  factorGraphTemplateVars :: Map VarId (ExpFam v, [FactorId]),
+  factorGraphTemplateRandFunctions :: Map RandFunId (ExpFam v, [ExpFam v], [FactorId]),
+  factorGraphTemplateFactors :: Map FactorId (Either (Factor v) RandFunId, [VarId])
+}
+
+makeFactorGraphTemplate :: [(VarId, ExpFam v)] -> [(RandFunId, ExpFam v, [ExpFam v])] -> [(FactorId, Either (Factor v) RandFunId, [VarId])] -> FactorGraphTemplate v
+makeFactorGraphTemplate vars randfuns factors = FactorGraphTemplate (Map.fromList fgv) (Map.fromList fgrf) (Map.fromList fgf)
   where fgv = [(varid, (ef, [factorid | (factorid, _, vars) <- factors, elem varid vars])) | (varid, ef) <- vars]
+        fgrf = [(rfid, (ef, featureEfs, [factorid | (factorid, Right rfid', _) <- factors, rfid' == rfid])) | (rfid, ef, featureEfs) <- randfuns]
         fgf = [(factorid, (fac, vars)) | (factorid, fac, vars) <- factors]
+
+type FactorGraphParams = Map RandFunId [Double]
+
+instantiateTemplate :: FactorGraphTemplate v -> FactorGraphParams -> FactorGraph v
+instantiateTemplate templ params =
+  FactorGraph {
+    factorGraphVars = factorGraphTemplateVars templ,
+    factorGraphFactors = Map.mapWithKey fixFactor (factorGraphTemplateFactors templ)
+  }
+  where fixFactor _ (Left f, vars) = (f, vars)
+        fixFactor factorid (Right randfun, var:vars) =
+          (expFamFactor (getExpFam var) (map getExpFam vars) (params ! randfun), var:vars)
+        getExpFam var = fst (factorGraphTemplateVars templ ! var)
+
+
+type FactorGraphState v = Map VarId (Likelihood v)
+
+initFactorGraphState :: FactorGraph v -> FactorGraphState v
+initFactorGraphState g = fmap (\(ef, _) -> NatParam $ replicate (expFamD ef) 0.0) (factorGraphVars g)
+
+varExpSufStat :: FactorGraph v -> FactorGraphState v -> VarId -> [Double]
+varExpSufStat graph state varid =
+  expSufStat (fst (factorGraphVars graph ! varid)) (state ! varid)
+
+newVarLikelihood :: Eq v => FactorGraph v -> FactorGraphState v -> VarId -> Maybe (Likelihood v)
+newVarLikelihood graph state varid =
+  let (_, fids) = factorGraphVars graph ! varid
+      fnp (factor, varids) =
+        factorNatParam factor (fromJust $ elemIndex varid varids) $ map (varExpSufStat graph state) varids
+  in productLikelihoods $ map (fnp . (factorGraphFactors graph !)) fids
+
+initTemplateParams :: FactorGraphTemplate v -> FactorGraphParams
+initTemplateParams = fmap getParam . factorGraphTemplateRandFunctions
+  where getParam (ef, featureEfs, _) =
+          replicate (expFamD ef * (1 + sum (map expFamD featureEfs))) 0.0
+
+updateTemplateParams :: FactorGraphTemplate v -> FactorGraphParams -> FactorGraphState v -> FactorGraphParams
+updateTemplateParams template origParams state = Map.mapWithKey updateParam origParams
+  where origGraph = instantiateTemplate template origParams
+        updateParam randFunId origParam =
+          let (ef, featureEfs, factorIds) = factorGraphTemplateRandFunctions template ! randFunId
+              factorValues factorId =
+                let (_, varids) = factorGraphTemplateFactors template ! factorId
+                    ss:fss = map (varExpSufStat origGraph state) varids
+                in (ss, concat fss)
+          in expFamMLE ef (map factorValues factorIds) origParam !! 10
+

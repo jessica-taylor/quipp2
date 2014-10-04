@@ -11,8 +11,8 @@ import Debug.Trace
 import Control.Monad (liftM)
 import Data.Foldable (foldlM)
 import Data.Maybe (fromJust)
-import Data.Random (RVarT, RVar, normalT)
-import Data.Random.Distribution.Categorical (categoricalT)
+import Data.Random (RVarT, RVar, normal, gamma)
+import Data.Random.Distribution.Categorical (categorical)
 import Numeric.AD (AD, Mode, Scalar, grad, hessian, auto)
 
 import Quipp.Util
@@ -22,7 +22,7 @@ data ExpFam v = ExpFam {
   expFamD :: Int,
   expFamSufStat :: v -> [Double],
   expFamG :: forall s. (RealFloat s, Mode s, Scalar s ~ Double) => [s] -> s,
-  expFamSample :: [Double] -> RVarT m v
+  expFamSample :: [Double] -> RVar v
 }
 
 promoteExpFam :: (v -> u, u -> v) -> ExpFam v -> ExpFam u
@@ -30,7 +30,7 @@ promoteExpFam (f, finv) ef = ExpFam {
   expFamD = expFamD ef,
   expFamSufStat = expFamSufStat ef . finv,
   expFamG = expFamG ef,
-  expFamSample = liftM f (expFamSample ef)
+  expFamSample = liftM f . expFamSample ef
 }
 
 lineSearch :: ([Double] -> Double) -> [Double] -> [Double] -> [Double]
@@ -81,7 +81,7 @@ timesLikelihood (NatParam n1) (NatParam n2)
 productLikelihoods :: Eq v => [Likelihood v] -> Maybe (Likelihood v)
 productLikelihoods (l:ls) = foldlM timesLikelihood l ls
 
-sampleLikelihood :: ExpFam v -> Likelihood v -> RVarT m v
+sampleLikelihood :: ExpFam v -> Likelihood v -> RVar v
 sampleLikelihood _ (KnownValue v) = return v
 sampleLikelihood ef (NatParam np) = expFamSample ef np
 
@@ -89,7 +89,7 @@ expSufStat :: ExpFam v -> Likelihood v -> [Double]
 expSufStat ef (KnownValue v) = expFamSufStat ef v
 expSufStat ef (NatParam np) = grad (expFamG ef) np
 
-mkExpFam :: [v -> Double] -> (forall s. (RealFloat s, Mode s, Scalar s ~ Double) => [s] -> s) -> (forall g m. (RandomGen g, MonadState m g) => [Double] -> m v) -> ExpFam v
+mkExpFam :: [v -> Double] -> (forall s. (RealFloat s, Mode s, Scalar s ~ Double) => [s] -> s) -> ([Double] -> RVar v) -> ExpFam v
 mkExpFam fs g sample = ExpFam {
   expFamD = length fs,
   expFamSufStat = \v -> map ($ v) fs,
@@ -106,20 +106,20 @@ gaussianExpFam = mkExpFam [id, (^2)] g sample
                                      mean = n1 * variance
                                  in log (2 * pi * variance) / 2 + mean^2/(2 * variance)
         g x = error ("bad gaussian natural parameter: " ++ show (map realToDouble x))
-        sample :: [Double] -> RVarT m Double
+        sample :: [Double] -> RVar Double
         sample [n1, n2] = let variance = -1 / (2 * n2)
                               mean = n1 * variance
+                          in normal mean (sqrt variance)
 
-                          in normalT mean (sqrt variance)
 
 categoricalExpFam :: Int -> ExpFam Int
-categoricalExpFam n = mkExpFam (map ss [1 .. n-1]) g
+categoricalExpFam n = mkExpFam (map ss [1 .. n-1]) g sample
   where ss i x = if x == i then 1.0 else 0.0
         g :: RealFloat a => [a] -> a
         g x | length x == n-1 = logSumExp (0:x)
             | otherwise = error ("bad categorical natural parameter: " ++ show (map realToDouble x))
-        sample :: [Double] -> RVarT m Int
-        sample ns = categoricalT $ zip (logProbsToProbs (0:ns)) [0..]
+        sample :: [Double] -> RVar Int
+        sample ns = categorical $ zip (logProbsToProbs (0:ns)) [0..]
 
 -- function log_gamma(xx)
 -- {

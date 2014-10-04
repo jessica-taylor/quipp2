@@ -1,12 +1,13 @@
 module Quipp.Util where
 
-import Data.Random (RVarT, RVar)
+import Data.Random (RVarT, RVar, StdRandom(StdRandom), runRVar)
 import qualified Data.Packed.Matrix as Mat
 import Numeric.LinearAlgebra.Algorithms (linearSolve)
 
 infixr 9 .:
 (f .: g) x y = f (g x y)
 
+sampleRVar v = runRVar v StdRandom
 
 negInfinity :: Double
 negInfinity = read "-Infinity"
@@ -15,7 +16,7 @@ logSumExp :: RealFloat a => [a] -> a
 logSumExp lps = mx + sum (map (\x -> exp (x - mx)) lps)
   where mx = maximum lps
 
-logProbsToProbs :: [Double] -> Double
+logProbsToProbs :: [Double] -> [Double]
 logProbsToProbs lps = [exp (lp - lse) | lp <- lps]
   where lse = logSumExp lps
 

@@ -1,5 +1,10 @@
 module Quipp.Main where
 
+import Control.Monad (liftM)
+import Control.Monad.Trans (lift)
+import Data.Maybe (fromJust)
+import Data.Random (RVar, RVarT, runRVarTWith, StdRandom(StdRandom))
+
 import Quipp.ExpFam
 import Quipp.Factor
 import Quipp.Vmp
@@ -29,16 +34,42 @@ clusterVars = [(i, categoricalExpFam2) | i <- [0 .. length values - 1]]
 
 valueVars = [(i + length values, gaussianExpFam2) | i <- [0 .. length values - 1]]
 
-gaussianFactorVars = [(i, expFamFactor gaussianExpFam2 [categoricalExpFam2] [0.1, 2.0, -1, 0], [i + length values, i]) | i <- [0 .. length values - 1]]
+gaussianRandFunctions = [(i, gaussianExpFam2, [categoricalExpFam2]) | i <- [0 .. length values - 1]]
 
-constFactorVars = [(i + length values, constFactor gaussianExpFam2 v, [i + length values]) | (i, v) <- zip [0..] values]
+gaussianFactorVars = [(i, Right i, [i + length values, i]) | i <- [0 .. length values - 1]]
+
+constFactorVars = [(i + length values, Left (constFactor gaussianExpFam2 v), [i + length values]) | (i, v) <- zip [0..] values]
 
 
 -- main = print $ take 20 $ expFamMLE gaussianExpFam [([1], [2.0, 4.0]), ([1], [3.0, 9.0])] [0, -2]
 --
 
-factorGraph = makeFactorGraph (clusterVars ++ valueVars) (gaussianFactorVars ++ constFactorVars)
+factorGraphTempl = makeFactorGraphTemplate (clusterVars ++ valueVars) gaussianRandFunctions (gaussianFactorVars ++ constFactorVars)
 
-stateList = iterate (>>= stepVmpState factorGraph) $ Just $ initVmpState factorGraph
+type FST = (FactorGraphState Value, FactorGraphParams)
 
-main = print $ take 10 stateList
+initFst :: FST
+initFst =
+  let params = initTemplateParams factorGraphTempl
+  in (initFactorGraphState (instantiateTemplate factorGraphTempl params), params)
+
+
+vmpStep :: FST -> Maybe FST
+vmpStep (state, params) = do
+  let factorGraph = instantiateTemplate factorGraphTempl params
+  state' <- stepVmp factorGraph state
+  let params' = updateTemplateParams factorGraphTempl params state'
+  return (state', params')
+
+stateList = iterate (fromJust . vmpStep) initFst
+
+iterateM :: Monad m => Int -> (a -> m a) -> a -> m [a]
+iterateM 0 _ x = return [x]
+iterateM n f x = liftM (x:) (f x >>= iterateM (n-1) f)
+
+-- getStateList2 :: RVarT Maybe [VmpState Value]
+-- getStateList2 = iterateM 10 (stepGibbs  factorGraph) (initVmpState factorGraph)
+
+main = do
+  -- x <- runRVarTWith (\(Just x) -> return x) getStateList2 StdRandom
+  print (take 10 stateList)
