@@ -2,7 +2,7 @@
 
 module Quipp.Factor (
   Factor(Factor, factorExpFams, factorLogValue, factorNatParam),
-  promoteFactor, constFactor, gaussianFactor, expFamFactor,
+  promoteFactor, constFactor, expFamFactor,
   VarId, FactorId, FactorGraph(FactorGraph, factorGraphVars, factorGraphFactors),
   FactorGraphTemplate(FactorGraphTemplate, factorGraphTemplateVars, factorGraphTemplateFactors),
   makeFactorGraphTemplate, instantiateTemplate,
@@ -41,40 +41,38 @@ constFactor ss x = Factor {
   factorNatParam = \0 [_] -> KnownValue x
 } where ssv = expFamSufStat ss x
 
-gaussianFactor :: Factor Double
-gaussianFactor =
-  Factor {
-    factorExpFams = [gaussianExpFam, gaussianExpFam, gammaExpFam],
-    factorLogValue = \[[x, x2], [mu, mu2], [prec, logprec]] ->
-      -(x2 + mu2 - 2*x*mu) * prec / 2,
-    factorNatParam = NatParam .: fnp
-  }
-  where
-    fnp 0 [_, [mu, mu2], [prec, logprec]] = [2*mu * prec/2, -prec/2]
-    fnp 1 [[x, x2], _, [prec, logprec]] = [2*x * prec/2, -prec/2]
-    fnp 2 [[x, x2], [mu, mu2], _] = [-(x2 + mu2 - 2 * x * mu)/2, 0]
+-- gaussianFactor :: Factor Double
+-- gaussianFactor =
+--   Factor {
+--     factorExpFams = [gaussianExpFam, gaussianExpFam, gammaExpFam],
+--     factorLogValue = \[[x, x2], [mu, mu2], [prec, logprec]] ->
+--       -(x2 + mu2 - 2*x*mu) * prec / 2,
+--     factorNatParam = NatParam .: fnp
+--   }
+--   where
+--     fnp 0 [_, [mu, mu2], [prec, logprec]] = [2*mu * prec/2, -prec/2]
+--     fnp 1 [[x, x2], _, [prec, logprec]] = [2*x * prec/2, -prec/2]
+--     fnp 2 [[x, x2], [mu, mu2], _] = [-(x2 + mu2 - 2 * x * mu)/2, 0]
 
 
 transpose xs = if maximum (map length xs) == 0 then [] else map head xs : transpose (map tail xs)
 
-expFamFactor :: ExpFam v -> [ExpFam v] -> Matrix Double -> Factor v
-expFamFactor ef featureExpFams eta
-  | length eta /= expFamD ef * (1 + sum (map expFamD featureExpFams)) =
-      error "Wrong number of expfam parameters"
-  | otherwise = 
-      Factor {
-        factorExpFams = ef:featureExpFams,
-        factorLogValue = \(ss:features) -> expFamLogProbability ef eta (concat features) ss,
-        factorNatParam = NatParam .: fnp
-      }
-  where fnp 0 (_:features) = linearMatMulByVector eta (1:concat features)
-        fnp n (ss:features) =
-          let allFeatures = 1 : concat features
-              gradProbNp = grad (\np -> dotProduct np (map auto ss) - expFamG ef np) $ matMulByVector eta allFeatures
-              minFeatureIndex = sum $ map expFamD $ take (n-1) featureExpFams
-              thisArgDim = expFamD (featureExpFams !! (n-1))
-              relevantEta = map (take thisArgDim . drop minFeatureIndex) eta
-          in matMulByVector (transpose relevantEta) gradProbNp
+expFamFactor :: ExpFam v -> [ExpFam v] -> Params Double -> Factor v
+expFamFactor ef argExpFams eta@(etaBase, etaWeights) =
+  Factor {
+    factorExpFams = ef:argExpFams,
+    -- TODO filter
+    factorLogValue = \(ss:argss) -> expFamLogProbability ef eta (argSsToFeatures argss) ss,
+    factorNatParam = NatParam .: fnp
+  }
+  where argSsToFeatures = concat . zipWith expFamSufStatToFeatures argExpFams
+        fnp 0 (_:argss) = getNatParam ef eta $ argSsToFeatures argss
+        fnp n (ss:argss) =
+          let gradProbNp = grad (\np -> dotProduct np (map auto ss) - expFamG ef np) $ getNatParam ef eta $ argSsToFeatures argss
+              minFeatureIndex = sum $ map expFamFeaturesD $ take (n-1) argExpFams
+              thisArgDim = expFamFeaturesD (argExpFams !! (n-1))
+              relevantWeights = map (take thisArgDim . drop minFeatureIndex) etaWeights
+          in expFamFeaturesToSufStat (argExpFams !! (n-1)) $ matMulByVector (transpose relevantWeights) gradProbNp
 
 type VarId = Int
 type FactorId = Int
@@ -98,7 +96,7 @@ makeFactorGraphTemplate vars randfuns factors = FactorGraphTemplate (Map.fromLis
         fgrf = [(rfid, (ef, featureEfs, [factorid | (factorid, Right rfid', _) <- factors, rfid' == rfid])) | (rfid, ef, featureEfs) <- randfuns]
         fgf = [(factorid, (fac, vars)) | (factorid, fac, vars) <- factors]
 
-type FactorGraphParams = Map RandFunId [Double]
+type FactorGraphParams = Map RandFunId (Params Double)
 
 instantiateTemplate :: FactorGraphTemplate v -> FactorGraphParams -> FactorGraph v
 instantiateTemplate templ params =
@@ -121,17 +119,22 @@ varExpSufStat :: FactorGraph v -> FactorGraphState v -> VarId -> [Double]
 varExpSufStat graph state varid =
   expSufStat (fst (factorGraphVars graph ! varid)) (state ! varid)
 
+varExpFeatures :: FactorGraph v -> FactorGraphState v -> VarId -> [Double]
+varExpFeatures graph state varid =
+  let ef = fst (factorGraphVars graph ! varid)
+  in expFamSufStatToFeatures ef $ varExpSufStat graph state varid
+
 newVarLikelihood :: Eq v => FactorGraph v -> FactorGraphState v -> VarId -> Maybe (Likelihood v)
 newVarLikelihood graph state varid =
   let (_, fids) = factorGraphVars graph ! varid
       fnp (factor, varids) =
-        factorNatParam factor (fromJust $ elemIndex varid varids) $ map (varExpSufStat graph state) varids
+        factorNatParam factor (fromJust $ elemIndex varid varids) $ map (varExpFeatures graph state) varids
   in productLikelihoods $ map (fnp . (factorGraphFactors graph !)) fids
 
 initTemplateParams :: FactorGraphTemplate v -> FactorGraphParams
 initTemplateParams = fmap getParam . factorGraphTemplateRandFunctions
   where getParam (ef, featureEfs, _) =
-          concat $ zipWith (:) (expFamDefaultNatParam ef) (repeat $ replicate (sum $ map expFamD featureEfs) 0.0)
+          (expFamDefaultNatParam ef, replicate (expFamFeaturesD ef) $ replicate (sum $ map expFamFeaturesD featureEfs) 0.0)
 
 traced s x = trace ("\n" ++ s ++ show x) x
 

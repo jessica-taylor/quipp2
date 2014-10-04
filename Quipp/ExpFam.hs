@@ -1,11 +1,14 @@
 {-# LANGUAGE RankNTypes, TypeFamilies, NoMonomorphismRestriction #-}
 
 module Quipp.ExpFam (ExpFam(ExpFam, expFamD, expFamSufStat, expFamG, expFamSample, expFamDefaultNatParam),
+                     expFamFeaturesD, expFamSufStatToFeatures, expFamFeaturesToSufStat,
+                     getNatParam,
+                     Params,
                      promoteExpFam, expFamLogProbability, expFamMLE,
                      Likelihood(KnownValue, NatParam), promoteLikelihood, negInfinity,
                      timesLikelihood, productLikelihoods,
                      sampleLikelihood, expSufStat,
-                     gaussianExpFam, categoricalExpFam, gammaExpFam) where
+                     gaussianExpFam, categoricalExpFam) where
 
 import Debug.Trace
 import Control.Monad (liftM)
@@ -26,6 +29,24 @@ data ExpFam v = ExpFam {
   expFamDefaultNatParam :: [Double],
   expFamFeaturesMask :: [Bool]
 }
+
+expFamFeaturesD :: ExpFam v -> Int
+expFamFeaturesD = length . filter id . expFamFeaturesMask
+
+expFamSufStatToFeatures :: ExpFam v -> [a] -> [a]
+expFamSufStatToFeatures ef ss
+  | length ss /= expFamD ef = error "bad suf stat length"
+  | otherwise = [s | (s, m) <- zip ss (expFamFeaturesMask ef), m]
+
+expFamFeaturesToSufStat :: Num a => ExpFam v -> [a] -> [a]
+expFamFeaturesToSufStat ef features
+  | length features /= expFamFeaturesD ef = error "bad features length"
+  | otherwise = getSS (expFamFeaturesMask ef) features
+    where getSS [] [] = []
+          getSS (True:ms) (f:fs) = f : getSS ms fs
+          getSS (False:ms) fs = 0 : getSS ms fs
+          getSS _ _ = undefined
+ 
 
 promoteExpFam :: (v -> u, u -> v) -> ExpFam v -> ExpFam u
 promoteExpFam (f, finv) ef = ExpFam {
@@ -57,17 +78,32 @@ traced label fn a = trace (const "" $ "\n" ++ label ++ ": " ++ show (fn a) ++ "\
 
 ratNum = (fromRational :: Rational -> Double) . toRational
 
-expFamLogProbability :: (RealFloat m, Mode m, Scalar m ~ Double) => ExpFam v -> Matrix m -> [Double] -> [Double] -> m
-expFamLogProbability fam eta features ss = dotProduct np (map auto ss) - expFamG fam np
-  where np = matMulByVector eta (map auto features)
+type Params m = ([m], Matrix m)
 
-expFamMLE :: ExpFam a -> [([Double], [Double])] -> Matrix Double -> [Matrix Double]
+paramsToVector :: Params m -> [m]
+paramsToVector (base, weights) = base ++ concat weights
+
+vectorToParams :: ExpFam v -> [m] -> Params m
+vectorToParams ef ps =
+  let d = expFamD ef
+      (basePart, weightsPart) = splitAt d ps
+      numArgFeatures = length weightsPart `div` expFamFeaturesD ef
+  in (basePart, splitListIntoBlocks numArgFeatures weightsPart)
+
+getNatParam :: (RealFloat m, Mode m, Scalar m ~ Double) => ExpFam v -> Params m -> [Double] -> [m]
+getNatParam ef (etaBase, etaWeights) argFeatures =
+  zipWith (+) etaBase (expFamFeaturesToSufStat ef $ matMulByVector etaWeights $ map auto argFeatures)
+
+expFamLogProbability :: (RealFloat m, Mode m, Scalar m ~ Double) => ExpFam v -> Params m -> [Double] -> [Double] -> m
+expFamLogProbability fam eta argFeatures ss = dotProduct np (map auto ss) - expFamG fam np
+  -- where np = matMulByVector eta (map auto features)
+  where np = getNatParam fam eta argFeatures
+
+expFamMLE :: ExpFam a -> [([Double], [Double])] -> Params Double -> [Params Double]
 expFamMLE fam samples etaStart =
-  let numFeatures = length $ fst $ head samples
-      toMat = splitListIntoBlocks numFeatures
-      f :: (RealFloat m, Mode m, Scalar m ~ Double) => [m] -> m
-      f eta = sum (map (uncurry $ expFamLogProbability fam $ toMat eta) samples)
-  in map toMat $ newtonMethod (\eta -> (f eta, grad f eta, hessian f eta)) $ concat etaStart
+  let f :: (RealFloat m, Mode m, Scalar m ~ Double) => [m] -> m
+      f eta = sum (map (uncurry $ expFamLogProbability fam $ vectorToParams fam eta) samples)
+  in map (vectorToParams fam) $ newtonMethod (\eta -> (f eta, grad f eta, hessian f eta)) $ paramsToVector etaStart
 
 data Likelihood v = KnownValue v | NatParam [Double] deriving (Eq, Ord, Show)
 
@@ -96,12 +132,13 @@ expSufStat ef (KnownValue v) = expFamSufStat ef v
 expSufStat ef (NatParam np) = grad (expFamG ef) np
 
 mkExpFam :: [v -> Double] -> (forall s. (RealFloat s, Mode s, Scalar s ~ Double) => [s] -> s) -> ([Double] -> RVar v) -> [Double] -> [Bool] -> ExpFam v
-mkExpFam fs g sample np = ExpFam {
+mkExpFam fs g sample np mask = ExpFam {
   expFamD = length fs,
   expFamSufStat = \v -> map ($ v) fs,
   expFamG = g,
   expFamSample = sample,
-  expFamDefaultNatParam = np
+  expFamDefaultNatParam = np,
+  expFamFeaturesMask = mask
 }
 
 
@@ -137,5 +174,5 @@ categoricalExpFam n = mkExpFam (map ss [1 .. n-1]) g sample (replicate (n-1) 0) 
 --     return -tmp+Math.log(2.5066282746310005*ser);
 -- }
 
-gammaExpFam :: ExpFam Double
-gammaExpFam = mkExpFam [id, log] undefined undefined undefined
+-- gammaExpFam :: ExpFam Double
+-- gammaExpFam = mkExpFam [id, log] undefined undefined undefined undefined
