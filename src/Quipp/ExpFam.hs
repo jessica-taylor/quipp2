@@ -74,7 +74,7 @@ newtonMethodStep f x =
 newtonMethod :: ([Double] -> (Double, [Double], Matrix Double)) -> [Double] -> [[Double]]
 newtonMethod f = iterate (newtonMethodStep f)
 
-traced label fn a = trace (const "" $ "\n" ++ label ++ ": " ++ show (fn a) ++ "\n") a
+traced label x = trace (label ++ " " ++ show x) x
 
 ratNum = (fromRational :: Rational -> Double) . toRational
 
@@ -102,7 +102,7 @@ expFamMLE :: ExpFam a -> [([Double], [Double])] -> Params Double -> [Params Doub
 expFamMLE fam samples etaStart =
   let f :: (RealFloat m, Mode m, Scalar m ~ Double) => [m] -> m
       f eta = sum (map (uncurry $ expFamLogProbability fam $ vectorToParams fam eta) samples)
-  in map (vectorToParams fam) $ newtonMethod (\eta -> (f eta, grad f eta, hessian f eta)) $ paramsToVector etaStart
+  in trace ("\nexpFamMLE " ++ show samples) $ map (vectorToParams fam) $ newtonMethod (\eta -> (f eta, grad f eta, hessian f eta)) $ paramsToVector etaStart
 
 data Likelihood v = KnownValue v | NatParam [Double] deriving (Eq, Ord, Show)
 

@@ -144,8 +144,8 @@ updateTemplateParams template origParams state = Map.mapWithKey updateParam orig
         updateParam randFunId origParam =
           let (ef, featureEfs, factorIds) = factorGraphTemplateRandFunctions template ! randFunId
               factorValues factorId =
-                let (_, varids) = factorGraphTemplateFactors template ! factorId
-                    ss:fss = map (varExpSufStat origGraph state) varids
-                in (1 : concat fss, ss)
-          in expFamMLE ef (map factorValues factorIds) origParam !! 20
+                let (_, svarid:fvarids) = factorGraphTemplateFactors template ! factorId
+                in traced "kay" (concat (map (varExpFeatures origGraph state) fvarids),
+                    varExpSufStat origGraph state svarid)
+          in traced "mle" $ expFamMLE ef (map factorValues factorIds) origParam !! 20
 
