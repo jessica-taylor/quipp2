@@ -87,8 +87,7 @@ vectorToParams :: ExpFam v -> [m] -> Params m
 vectorToParams ef ps =
   let d = expFamD ef
       (basePart, weightsPart) = splitAt d ps
-      numArgFeatures = length weightsPart `div` expFamFeaturesD ef
-  in (basePart, splitListIntoBlocks numArgFeatures weightsPart)
+  in (basePart, splitListIntoBlocks (expFamFeaturesD ef) weightsPart)
 
 getNatParam :: (RealFloat m, Mode m, Scalar m ~ Double) => ExpFam v -> Params m -> [Double] -> [m]
 getNatParam ef (etaBase, etaWeights) argFeatures =

@@ -30,17 +30,20 @@ outerProduct :: Num a => [a] -> [a] -> Matrix a
 outerProduct as bs = [[a*b | b <- bs] | a <- as]
 
 splitListIntoBlocks :: Int -> [a] -> [[a]]
-splitListIntoBlocks _ [] = []
-splitListIntoBlocks n lst = take n lst : splitListIntoBlocks n (drop n lst)
+splitListIntoBlocks n lst
+  | blocksize * n /= length lst = undefined
+  | blocksize == 0 = replicate n []
+  | otherwise = go blocksize lst
+  where blocksize = length lst `div` n
+        go _ [] = []
+        go k lst = take k lst : go k (drop k lst)
+
 
 dotProduct :: Num a => [a] -> [a] -> a
 dotProduct x y = sum (zipWith (*) x y)
 
 matMulByVector :: Num a => Matrix a -> [a] -> [a]
 matMulByVector m v = map (dotProduct v) m
-
-linearMatMulByVector :: Num a => [a] -> [a] -> [a]
-linearMatMulByVector m v = matMulByVector (splitListIntoBlocks (length v) m) v
 
 linSolve :: Matrix Double -> [Double] -> [Double]
 linSolve mat d = -- traceShow mat $ concat $ Mat.toLists $ linearSolve (Mat.fromLists mat) (Mat.fromLists (map return d))

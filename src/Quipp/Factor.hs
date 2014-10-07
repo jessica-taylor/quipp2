@@ -147,5 +147,5 @@ updateTemplateParams template origParams state = Map.mapWithKey updateParam orig
                 let (_, varids) = factorGraphTemplateFactors template ! factorId
                     ss:fss = map (varExpSufStat origGraph state) varids
                 in (1 : concat fss, ss)
-          in expFamMLE ef (map factorValues factorIds) origParam !! 10
+          in expFamMLE ef (map factorValues factorIds) origParam !! 20
 
