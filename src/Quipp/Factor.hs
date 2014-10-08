@@ -115,6 +115,12 @@ type FactorGraphState v = Map VarId (Likelihood v)
 initFactorGraphState :: FactorGraph v -> FactorGraphState v
 initFactorGraphState g = fmap (\(ef, _) -> NatParam $ replicate (expFamD ef) 0.0) (factorGraphVars g)
 
+independentSampleFactorGraphState :: FactorGraph v -> FactorGraphState v -> RVar (FactorGraphState v)
+independentSampleFactorGraphState factorGraph = liftM Map.fromList . mapM sampleVar . Map.toList
+  where sampleVar (id, likelihood) = do
+          value <- sampleLikelihood (fst $ factorGraphVars factorGraph ! id) likelihood
+          return (id, KnownValue value)
+
 varExpSufStat :: FactorGraph v -> FactorGraphState v -> VarId -> [Double]
 varExpSufStat graph state varid =
   expSufStat (fst (factorGraphVars graph ! varid)) (state ! varid)
@@ -134,18 +140,18 @@ newVarLikelihood graph state varid =
 initTemplateParams :: FactorGraphTemplate v -> FactorGraphParams
 initTemplateParams = fmap getParam . factorGraphTemplateRandFunctions
   where getParam (ef, featureEfs, _) =
-          (expFamDefaultNatParam ef, replicate (expFamFeaturesD ef) $ replicate (sum $ map expFamFeaturesD featureEfs) 0.0)
+          (expFamDefaultNatParam ef, replicate (expFamFeaturesD ef) $ replicate (sum $ map expFamFeaturesD featureEfs) 0.0001)
 
 traced s x = trace ("\n" ++ s ++ show x) x
 
-updateTemplateParams :: FactorGraphTemplate v -> FactorGraphParams -> FactorGraphState v -> FactorGraphParams
-updateTemplateParams template origParams state = Map.mapWithKey updateParam origParams
+updateTemplateParams :: FactorGraphTemplate v -> FactorGraphParams -> [(Double, FactorGraphState v)] -> FactorGraphParams
+updateTemplateParams template origParams states = Map.mapWithKey updateParam origParams
   where origGraph = instantiateTemplate template origParams
         updateParam randFunId origParam =
           let (ef, featureEfs, factorIds) = factorGraphTemplateRandFunctions template ! randFunId
-              factorValues factorId =
+              factorValues factorId weight state =
                 let (_, svarid:fvarids) = factorGraphTemplateFactors template ! factorId
-                in traced "kay" (concat (map (varExpFeatures origGraph state) fvarids),
+                in (weight, concat (map (varExpFeatures origGraph state) fvarids),
                     varExpSufStat origGraph state svarid)
-          in traced "mle" $ expFamMLE ef (map factorValues factorIds) origParam !! 20
+          in expFamMLE ef [factorValues factorId weight state | factorId <- factorIds, (weight, state) <- states] origParam !! 20
 

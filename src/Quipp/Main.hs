@@ -54,26 +54,26 @@ initFst =
   let params = initTemplateParams factorGraphTempl
   in (initFactorGraphState (instantiateTemplate factorGraphTempl params), params)
 
+iterateM :: Monad m => Int -> (a -> m a) -> a -> m [a]
+iterateM 0 _ x = return [x]
+iterateM n f x = liftM (x:) (f x >>= iterateM (n-1) f)
 
 vmpStep :: FST -> Maybe FST
 vmpStep (state, params) = do
   let factorGraph = instantiateTemplate factorGraphTempl params
   state' <- stepVmp factorGraph state
-  let params' = updateTemplateParams factorGraphTempl params state'
+  let params' = updateTemplateParams factorGraphTempl params [(1.0, state')]
   return (state', params')
 
 gibbsStep :: FST -> RVarT Maybe FST
 gibbsStep (state, params) = do
   let factorGraph = instantiateTemplate factorGraphTempl params
-  state' <- stepGibbs factorGraph state
-  let params' = updateTemplateParams factorGraphTempl params state'
-  return (state', params')
+  newStates <- iterateM 10 (stepGibbs factorGraph) state
+  let params' = updateTemplateParams factorGraphTempl params [(1.0, s) | s <- newStates]
+  return (last newStates, params')
 
 stateList = iterate (fromJust . vmpStep) initFst
 
-iterateM :: Monad m => Int -> (a -> m a) -> a -> m [a]
-iterateM 0 _ x = return [x]
-iterateM n f x = liftM (x:) (f x >>= iterateM (n-1) f)
 
 stateList2 = iterateM 10 gibbsStep initFst
 
@@ -84,4 +84,5 @@ main = do
   x <- runRVarTWith (\(Just x) -> return x) stateList2 StdRandom
   mapM_ print $ take 10 x
   -- x <- runRVarTWith (\(Just x) -> return x) getStateList2 StdRandom
-  -- print (map snd $ take 20 stateList)
+  putStrLn "--------"
+  mapM_ print $ take 10 stateList

@@ -98,11 +98,12 @@ expFamLogProbability fam eta argFeatures ss = dotProduct np (map auto ss) - expF
   -- where np = matMulByVector eta (map auto features)
   where np = getNatParam fam eta argFeatures
 
-expFamMLE :: ExpFam a -> [([Double], [Double])] -> Params Double -> [Params Double]
+expFamMLE :: ExpFam a -> [(Double, [Double], [Double])] -> Params Double -> [Params Double]
 expFamMLE fam samples etaStart =
   let f :: (RealFloat m, Mode m, Scalar m ~ Double) => [m] -> m
-      f eta = sum (map (uncurry $ expFamLogProbability fam $ vectorToParams fam eta) samples)
-  in trace ("\nexpFamMLE " ++ show samples) $ map (vectorToParams fam) $ newtonMethod (\eta -> (f eta, grad f eta, hessian f eta)) $ paramsToVector etaStart
+      f eta = sum [auto weight * expFamLogProbability fam params xs ys | (weight, xs, ys) <- samples]
+        where params = vectorToParams fam eta
+  in map (vectorToParams fam) $ newtonMethod (\eta -> (f eta, grad f eta, hessian f eta)) $ paramsToVector etaStart
 
 data Likelihood v = KnownValue v | NatParam [Double] deriving (Eq, Ord, Show)
 
