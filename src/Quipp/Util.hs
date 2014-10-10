@@ -13,9 +13,13 @@ sampleRVar v = runRVar v StdRandom
 negInfinity :: Double
 negInfinity = read "-Infinity"
 
+-- NOTE: this version doesn't work with ad :(
+-- logSumExp :: RealFloat a => [a] -> a
+-- logSumExp lps = mx + log $ sum (map (\x -> exp (x - mx)) lps)
+--   where mx = maximum lps
+
 logSumExp :: RealFloat a => [a] -> a
-logSumExp lps = mx + sum (map (\x -> exp (x - mx)) lps)
-  where mx = maximum lps
+logSumExp lps = log $ sum $ map exp lps
 
 logProbsToProbs :: [Double] -> [Double]
 logProbsToProbs lps = [exp (lp - lse) | lp <- lps]

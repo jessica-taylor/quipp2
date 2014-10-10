@@ -153,5 +153,5 @@ updateTemplateParams template origParams states = Map.mapWithKey updateParam ori
                 let (_, svarid:fvarids) = factorGraphTemplateFactors template ! factorId
                 in (weight, concat (map (varExpFeatures origGraph state) fvarids),
                     varExpSufStat origGraph state svarid)
-          in expFamMLE ef [factorValues factorId weight state | factorId <- factorIds, (weight, state) <- states] origParam !! 20
+          in expFamMLE ef [factorValues factorId weight state | factorId <- factorIds, (weight, state) <- states] origParam !! 30
 

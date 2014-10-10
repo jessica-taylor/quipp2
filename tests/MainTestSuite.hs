@@ -25,7 +25,7 @@ assertApproxEqual :: Double -> Double -> Double -> IO ()
 assertApproxEqual eps x y = assertBool ("Expected " ++ show x ++ ", got " ++ show y) (abs (x - y) <= eps)
 
 gaussianMleTest ys =
-  let ([n1, n2], [[]]) = traced $ expFamMLE gaussianExpFam [([], [y, y^2]) | y <- ys] (expFamDefaultNatParam gaussianExpFam, [[]]) !! 20
+  let ([n1, n2], [[]]) = traced $ expFamMLE gaussianExpFam [(1.0, [], [y, y^2]) | y <- ys] (expFamDefaultNatParam gaussianExpFam, [[]]) !! 20
       var = -1 / (2 * n2)
       mn = n1 * var
   in assertApproxEqual 0.1 (mean ys) mn >> assertApproxEqual 0.1 (variance ys) var
@@ -38,7 +38,7 @@ gaussianMleExamples = [
 gaussianMleTestUnit = testCase "non-conditioned gaussian MLE" $ mapM_ gaussianMleTest gaussianMleExamples
 
 gaussianCondMleTest samps =
-  let ([n1, n2], [[n3]]) = expFamMLE gaussianExpFam [([x], [y, y^2]) | (x, y) <- samps] (expFamDefaultNatParam gaussianExpFam, [[0.0]]) !! 20
+  let ([n1, n2], [[n3]]) = expFamMLE gaussianExpFam [(1.0, [x], [y, y^2]) | (x, y) <- samps] (expFamDefaultNatParam gaussianExpFam, [[0.0]]) !! 20
       var = -1 / (2 * n2)
       mn0 = n1 * var
       slope = n3 * var

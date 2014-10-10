@@ -22,6 +22,12 @@ a ^>> b = do
   b
   return x
 
+(>>++) :: Monad m => m [a] -> m [a] -> m [a]
+a >>++ b = do
+  x <- a
+  y <- b
+  return (x ++ y)
+
 withWhitespace p = p ^>> spaces
 
 upperId = withWhitespace ((:) <$> satisfy isUpper <*> many wordChar)
@@ -29,7 +35,17 @@ lowerId = withWhitespace $ do
   id <- (:) <$> satisfy isUpper <*> many wordChar
   if elem id keywords then fail "Keyword is not an ID" else return id
 
+literalInt = (read :: String -> Integer) <$> withWhitespace (many1 $ satisfy isDigit)
+
+literalDouble = (read :: String -> Double) <$> (many (satisfy isDigit) >>++ string "." >>++ many (satisfy isDigit))
+
+stringChar = (return <$> satisfy (\x -> x /= '"' && x /= '\\')) <|> (string "\\" >>++ (return <$> satisfy (`elem` "0abfnrtv\"\\")))
+
+literalString = (read :: String -> String) <$> (string "\"" >>++ many stringChar >>++ string "\"")
+
 withParens p = withWhitespace (string "(") >> p ^>> withWhitespace (string ")")
+
+
 
 -- atomType = withParens anyType <|> fmap VarTypeExpr lowerId <|> fmap ConstructorTypeExpr upperId
 

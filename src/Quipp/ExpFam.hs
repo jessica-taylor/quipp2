@@ -98,10 +98,10 @@ expFamLogProbability fam eta argFeatures ss = dotProduct np (map auto ss) - expF
   -- where np = matMulByVector eta (map auto features)
   where np = getNatParam fam eta argFeatures
 
-expFamMLE :: ExpFam a -> [(Double, [Double], [Double])] -> Params Double -> [Params Double]
-expFamMLE fam samples etaStart =
+expFamMLE :: ExpFam a -> [(Double, [Double], [[Double]], [Double])] -> Params Double -> [Params Double]
+expFamMLE fam samples etaStart = trace ("\nexpFamMLE " ++ show samples) $
   let f :: (RealFloat m, Mode m, Scalar m ~ Double) => [m] -> m
-      f eta = sum [auto weight * expFamLogProbability fam params xs ys | (weight, xs, ys) <- samples]
+      f eta = sum [auto weight * expFamLogProbability fam params exs ys | (weight, exs, varxs, ys) <- samples]
         where params = vectorToParams fam eta
   in map (vectorToParams fam) $ newtonMethod (\eta -> (f eta, grad f eta, hessian f eta)) $ paramsToVector etaStart
 
@@ -129,7 +129,10 @@ sampleLikelihood ef (NatParam np) = expFamSample ef np
 
 expSufStat :: ExpFam v -> Likelihood v -> [Double]
 expSufStat ef (KnownValue v) = expFamSufStat ef v
-expSufStat ef (NatParam np) = grad (expFamG ef) np
+expSufStat ef (NatParam np) = 
+  let g = grad (expFamG ef) np
+  in if any isNaN g then error ("Bad g gradient: " ++ show np ++ ", " ++ show g)
+  else g
 
 mkExpFam :: [v -> Double] -> (forall s. (RealFloat s, Mode s, Scalar s ~ Double) => [s] -> s) -> ([Double] -> RVar v) -> [Double] -> [Bool] -> ExpFam v
 mkExpFam fs g sample np mask = ExpFam {
