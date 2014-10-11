@@ -1,12 +1,17 @@
 
 
+forall b. (Int -> b -> b) -> b -> b
 
+data Kind = StarKind | FunKind Kind Kind
 
+data TypeExpr = VarTExpr String | LambdaTExpr String TypeExpr TypeExpr | AppTExpr TypeExpr TypeExpr | FunTExpr [(String, Kind] 
 
 
 data AnnotatedExpr = VarAExpr String | LambdaAExpr [(String, AnnotatedExpr)] String AnnotatedExpr AnnotatedExpr | AppAExpr AnnotatedExpr [AnnotatedExpr] AnnotatedExpr
 
 data Expr = VarExpr String | LambdaExpr [(String, Expr)] String (Maybe Expr) Expr | AppExpr Expr (Maybe [Expr]) Expr
+
+
 
 
 
