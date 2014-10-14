@@ -7,8 +7,9 @@ import Text.Parsec.Char
 import Text.Parsec.Combinator
 import Text.Parsec.Prim
 
+import Quipp.TypeInference
+import Quipp.Value
 
-data TypeExpr = ConstructorTypeExpr String | AppTypeExpr TypeExpr TypeExpr | VarTypeExpr String
 
 wordChar = satisfy (\x -> isAlphaNum x || x == '_')
 
@@ -30,7 +31,7 @@ a >>++ b = do
 
 withWhitespace p = p ^>> spaces
 
-token = withWhitespace . string
+spacedString = withWhitespace . string
 
 upperId = withWhitespace ((:) <$> satisfy isUpper <*> many wordChar)
 lowerId = withWhitespace $ do
@@ -45,7 +46,7 @@ literalDouble = (LiteralExpr . DoubleValue . read) <$> (many (satisfy isDigit) >
 
 -- literalString = (read :: String -> String) <$> (string "\"" >>++ many stringChar >>++ string "\"")
 
-withParens p = token "(" >> p ^>> token ")"
+withParens p = spacedString "(" >> p ^>> spacedString ")"
 
 varExpr = VarExpr <$> lowerId
 
@@ -58,18 +59,18 @@ applicationExpr = foldl1 AppExpr <$> withWhitespace (many atomExpr)
 
 
 lambdaExpr = do
-  token "\\"
+  spacedString "\\"
   paramNames <- many lowerId
-  token "->"
+  spacedString "->"
   body <- expr
   return $ foldr LambdaExpr body paramNames
 
 letExpr = do
-  token "let"
+  spacedString "let"
   var <- lowerId
-  token "="
+  spacedString "="
   value <- expr
-  token "in"
+  spacedString "in"
   body <- expr
   return $ LetExpr var value body
 
@@ -82,9 +83,9 @@ expr = letExpr <|> lambdaExpr <|> applicationExpr
 -- assignmentDeclaration = do
 --   var <- lowerId
 --   args <- many lowerId
---   token "="
+--   spacedString "="
 --   body <- expr
---   token ";"
+--   spacedString ";"
 --   return $ AssignmentDeclaration var (foldr LambdaExpr body args)
 -- 
 -- declaration = assignmentDeclaration

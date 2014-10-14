@@ -3,7 +3,7 @@
 module Quipp.Factor (
   Factor(Factor, factorExpFams, factorLogValue, factorNatParam),
   promoteFactor, constFactor, expFamFactor,
-  VarId, FactorId, FactorGraph(FactorGraph, factorGraphVars, factorGraphFactors),
+  VarId, RandFunId, FactorId, FactorGraph(FactorGraph, factorGraphVars, factorGraphFactors),
   FactorGraphTemplate(FactorGraphTemplate, factorGraphTemplateVars, factorGraphTemplateFactors),
   makeFactorGraphTemplate, instantiateTemplate,
   FactorGraphState, initFactorGraphState, varExpSufStat, newVarLikelihood,
@@ -125,10 +125,18 @@ varExpSufStat :: FactorGraph v -> FactorGraphState v -> VarId -> [Double]
 varExpSufStat graph state varid =
   expSufStat (fst (factorGraphVars graph ! varid)) (state ! varid)
 
+varCovarianceSufStat :: FactorGraph v -> FactorGraphState v -> VarId -> [[Double]]
+varCovarianceSufStat graph state varid =
+  covarianceSufStat (fst (factorGraphVars graph ! varid)) (state ! varid)
+
 varExpFeatures :: FactorGraph v -> FactorGraphState v -> VarId -> [Double]
 varExpFeatures graph state varid =
   let ef = fst (factorGraphVars graph ! varid)
   in expFamSufStatToFeatures ef $ varExpSufStat graph state varid
+
+varCovarianceFeatures graph state varid =
+  let ef = fst (factorGraphVars graph ! varid)
+  in expFamSufStatToFeatures ef $ map (expFamSufStatToFeatures ef) $ varCovarianceSufStat graph state varid
 
 newVarLikelihood :: Eq v => FactorGraph v -> FactorGraphState v -> VarId -> Maybe (Likelihood v)
 newVarLikelihood graph state varid =

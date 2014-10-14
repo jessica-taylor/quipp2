@@ -7,7 +7,7 @@ module Quipp.ExpFam (ExpFam(ExpFam, expFamD, expFamSufStat, expFamG, expFamSampl
                      promoteExpFam, expFamLogProbability, expFamMLE,
                      Likelihood(KnownValue, NatParam), promoteLikelihood, negInfinity,
                      timesLikelihood, productLikelihoods,
-                     sampleLikelihood, expSufStat,
+                     sampleLikelihood, expSufStat, covarianceSufStat,
                      gaussianExpFam, categoricalExpFam) where
 
 import Debug.Trace
@@ -98,10 +98,10 @@ expFamLogProbability fam eta argFeatures ss = dotProduct np (map auto ss) - expF
   -- where np = matMulByVector eta (map auto features)
   where np = getNatParam fam eta argFeatures
 
-expFamMLE :: ExpFam a -> [(Double, [Double], [[Double]], [Double])] -> Params Double -> [Params Double]
+expFamMLE :: ExpFam a -> [(Double, [Double], {- [[Double]], -} [Double])] -> Params Double -> [Params Double]
 expFamMLE fam samples etaStart = trace ("\nexpFamMLE " ++ show samples) $
   let f :: (RealFloat m, Mode m, Scalar m ~ Double) => [m] -> m
-      f eta = sum [auto weight * expFamLogProbability fam params exs ys | (weight, exs, varxs, ys) <- samples]
+      f eta = sum [auto weight * expFamLogProbability fam params exs ys | (weight, exs, {- varxs, -} ys) <- samples]
         where params = vectorToParams fam eta
   in map (vectorToParams fam) $ newtonMethod (\eta -> (f eta, grad f eta, hessian f eta)) $ paramsToVector etaStart
 
@@ -133,6 +133,12 @@ expSufStat ef (NatParam np) =
   let g = grad (expFamG ef) np
   in if any isNaN g then error ("Bad g gradient: " ++ show np ++ ", " ++ show g)
   else g
+
+covarianceSufStat :: ExpFam v -> Likelihood v -> [[Double]]
+covarianceSufStat ef (KnownValue v) = outerProduct ss ss
+  where ss = expFamSufStat ef v
+covarianceSufStat ef (NatParam np) =
+  hessian (expFamG ef) np
 
 mkExpFam :: [v -> Double] -> (forall s. (RealFloat s, Mode s, Scalar s ~ Double) => [s] -> s) -> ([Double] -> RVar v) -> [Double] -> [Bool] -> ExpFam v
 mkExpFam fs g sample np mask = ExpFam {
