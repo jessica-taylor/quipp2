@@ -12,8 +12,6 @@ import Quipp.Vmp
 import Quipp.Util
 
 
-data Value = DoubleValue Double | CategoricalValue Int deriving (Eq, Ord, Show)
-
 fromDoubleValue (DoubleValue a) = a
 
 doublePromoter = (DoubleValue, fromDoubleValue)

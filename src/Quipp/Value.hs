@@ -1,6 +1,4 @@
-module Quipp.Value (Value) where
+module Quipp.Value where
 
 
-data Type = DoubleType deriving (Eq, Ord, Show)
-
-data Value = DoubleValue Double deriving (Eq, Ord, Show)
+data Value = DoubleValue Double | CategoricalValue Int deriving (Eq, Ord, Show)

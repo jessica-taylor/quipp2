@@ -1,81 +1,144 @@
 
+import Control.Applicative ((<$>), (<*>))
+import Control.Monad (liftM)
 
-forall b. (Int -> b -> b) -> b -> b
+data Void
 
 data Kind = StarKind | FunKind Kind Kind
 
-data TypeExpr = VarTExpr String | LambdaTExpr String TypeExpr TypeExpr | AppTExpr TypeExpr TypeExpr | FunTExpr [(String, Kind] 
+data TypeExpr = VarTExpr String | ConstTExpr String | AppTExpr (TypeExpr v) (TypeExpr v)
+
+data AnnotatedExprBody = VarAExpr String | LambdaAExpr String TypeExpr AnnotatedExpr | AppAExpr AnnotatedExpr AnnotatedExpr | LetAExpr String AnnotatedExpr AnnotatedExpr | LiteralAExpr Value
+
+type AnnotatedExpr = (TypeExpr, AnnotatedExprBody)
+
+data Expr = VarExpr String | LambdaExpr String Expr | AppExpr Expr Expr | LetExpr String Expr Expr | LiteralExpr Value
+
+type TypeId = Int
+
+type HindleyMilnerState = (Map String TypeExpr, TypeId)
+
+type TypeCheck = StateT (Either String) HindleyMilnerState
+
+functionType a b = AppTExpr (AppTExpr (ConstTExpr "->") a) b
+
+newTypeId :: TypeCheck String
+newTypeId = do
+  (m, tid) <- get
+  put (m, tid + 1)
+  return ("_typeid_" ++ show tid)
+
+reduceTypeShallow :: TypeExpr -> TypeCheck TypeExpr
+reduceTypeShallow t@(VarTExpr v) = do
+  (m, _) <- get
+  case Map.lookup v m of
+    Nothing -> t
+    Just t' -> reduceTypeShallow t'
+reduceTypeShallow other = return other
+
+reduceTypeDeep :: TypeExpr -> TypeCheck TypeExpr
+reduceTypeDeep t = do
+  t' <- reduceTypeShallow t
+  case t' of
+    AppTExpr fun arg -> AppTExpr <$> reduceTypeDeep fun <*> reduceTypeDeep arg
+    other -> return other
 
 
-data AnnotatedExpr = VarAExpr String | LambdaAExpr [(String, AnnotatedExpr)] String AnnotatedExpr AnnotatedExpr | AppAExpr AnnotatedExpr [AnnotatedExpr] AnnotatedExpr
+unifyReduced :: TypeExpr -> TypeExpr -> TypeCheck ()
 
-data Expr = VarExpr String | LambdaExpr [(String, Expr)] String (Maybe Expr) Expr | AppExpr Expr (Maybe [Expr]) Expr
+unifyReduced (VarTExpr v) other = do
+  (m, count) <- get
+  put (Map.insert v other m, count)
 
+unifyReduced other t@(VarTExpr v) = unifyReduced t other
 
+unifyReduced (ConstTExpr a) (ConstTExpr b) | a == b = return ()
 
+unifyReduced (AppAExpr a b) (AppAExpr c d) = do
+  unify a c
+  unify b d
 
+unifyReduced _ _ = lift (Left "Unification failed")
 
-insertAll :: Ord k => [(k, v)] -> Map k v -> Map k v
-insertAll = foldr (uncurry Map.insert)
+unify :: TypeExpr TypeId -> TypeExpr TypeId -> TypeCheck ()
 
-setInsertAll :: Ord k => [k] -> Set k -> Set k
-setInsertAll = foldr Set.insert
-
-mapmExpr' :: Monad m => Set String -> (String -> m Expr) -> Expr -> m Expr
-
-mapmExpr' exclude f e@(VarExpr s) | Set.member s exclude = e
-                                  | otherwise = f s
-
-mapmExpr' exclude f (AppExpr fun gens arg) = do
-  fun' <- mapmExpr' exclude f fun
-  gens' <- fmapM (fmapM (mapmExpr' exclude f)) gens
-  arg' <- mapmExpr' exclude f arg
-  return AppExpr fun' gens' arg'
-
-mapmExpr' exclude f (LambdaExpr gen param paramType body) = do
-  gen' <- forM gen $ \(g, t) -> liftM (g,) $ mapmExpr' exclude f t
-  let exclude' = setInsertAll (map fst gen) exclude
-  paramType' <- fmapM (mapmExpr' exclude' f) paramType
-  let exclude'' = Set.insert param exclude'
-  body' <- mapmExpr' exclude'' f body
-  return (LambdaExpr gen' param paramType' body')
-
-mapmExpr = mapmExpr' Set.empty
-
-substExpr :: Map String Expr -> Expr -> Expr
-substExpr subst = runIdentity . mapmExpr (return . substitute)
-  where substitute v = case Map.lookup v subst of
-          Nothing -> VarExpr v
-          Just x -> x
-
-synthesizeExpr :: Map String AnnotatedExpr -> Expr -> Either String AnnotatedExpr
-
-synthesizeExpr ctx (VarExpr v)
-  | Map.member v ctx = return (VarAExpr v)
-  | otherwise = Left ("Unknown variable " ++ v)
-
-synthesizeExpr ctx (LambdaExpr _ _ Nothing _) = Left "Cannot synthesize unannotated lambda"
-
-synthesizeExpr ctx (LambdaExpr gen param (Just paramType) body) = do
-  -- TODO sequence?
-  annGen <- mapM (\(gvar, gtype) -> liftM (gvar,) (synthesizeExpr ctx gtype)) gen
-  let ctx' = insertAll annGen ctx
-  annParamType <- synthesizeExpr ctx' paramType
-  let ctx'' = Map.insert param annParamType ctx'
-  annBody <- synthesizeExpr ctx'' body
-  return $ LambdaAExpr annGen param annParamType annBody
-
-synthesizeExpr ctx (AppExpr fun Nothing arg) = do
-  annFun <- synthesizeExpr ctx fun
-  annArg <- synthesizeExpr ctx arg
-  -- TODO substitute
-
-synthesizeExpr ctx (AppExpr fun (Just gen) arg) = do
-  annFun <- synthesizeExpr ctx fun
-  annGen <- mapM (synthesizeExpr ctx) gen
-  -- TODO ctx
+unify a b = unifyReduced <$> reduceTypeShallow a <*> reduceTypeShallow b
 
 
-  
-  
+cloneWithNewVars' :: Map String String -> TypeExpr -> TypeCheck (TypeExpr, Map String String)
+
+cloneWithNewVars' m (VarTExpr v) = case lookup v m of
+  Just newvar -> return (VarTExpr newvar, m)
+  Nothing -> do
+    newvar <- newTypeId
+    return (VarExpr newvar, Map.insert v newvar m)
+
+cloneWithNewVars' m (AppTExpr fun arg) = AppTExpr <$> cloneWithNewVars' m fun <*> cloneWithNewVars' m arg
+
+cloneWithNewVars' m other = return (other, m)
+
+cloneWithNewVars :: TypeExpr -> TypeCheck TypeExpr
+cloneWithNewVars = liftM fst . cloneWithNewVars' Map.empty
+
+
+hindleyMilner :: (String -> TypeCheck TypeExpr) -> Expr -> TypeCheck AnnotatedExpr
+
+hindleyMilner ctx (VarExpr v) = do
+  t <- ctx v
+  return (t, VarAExpr v)
+
+hindleyMilner ctx (LambdaExpr var body) = do
+  argType <- liftM VarTExpr newTypeId
+  let newCtx v = if v == var then return argType else ctx v
+  bodyAExpr@(bodyType, _) <- hindleyMilner newCtx body
+  return (functionType argType bodyType, LambdaAExpr var bodyAExpr)
+
+hindleyMilner ctx (AppExpr fun arg) = do
+  funAExpr@(funType, _) <- hindleyMilner ctx fun
+  argAExpr@(argType, _) <- hindleyMilner ctx arg
+  resultType <- liftM VarTExpr newTypeId
+  unify funType (functionType argType resultType)
+  return (resultType, AppAExpr funAExpr argAExpr)
+
+hindleyMilner ctx (LetExpr var value body) = do
+  valueAExpr@(valueType, _) <- hindleyMilner ctx value
+  let newCtx v = if v == var then cloneWithNewVars valueType else ctx v
+  bodyAExpr@(bodyType, _) <- hindleyMilner newCtx body
+  return (bodyType, LetAExpr var valueAExpr bodyAExpr)
+
+hindleyMilner ctx (LiteralExpr lit) =
+  let t = case lit of
+            DoubleValue _ -> "Double"
+            CategoricalValue _ -> "Categorical"
+  in return (ConstTExpr t, LiteralAExpr lit)
+
+data GraphValue = VarGraphValue VarId | LambdaGraphValue (GraphValue -> GraphBuilder GraphValue)
+
+expFamForType :: TypeExpr -> ExpFam Value
+expFamForType (ConstTExpr "Double") = gaussianExpFam
+expFamForType t = error "Can't get exponential family for type " ++ show t
+
+interpretExpr :: Map String GraphValue -> AnnotatedExpr -> GraphBuilder Value GraphValue
+
+interpretExpr m (_, VarAExpr var) = case lookup var m of
+  Nothing -> error ("cannot find variable " ++ var)
+  Just val -> return val
+
+interpretExpr m (_, LambdaAExpr param _ body) = return $ LambdaGraphValue $
+  \arg -> interpretExpr (Map.insert param arg m) body
+
+interpretExpr m (_, AppAExpr fun arg) = do
+  funVal <- interpretExpr m fun
+  case funVal of
+    LambaGraphValue f -> interpretExpr m arg >>= f
+    _ -> error "Function in application expression is not actually a function"
+
+interpretExpr m (_, LetAExpr var value body) = do
+  val <- interpretExpr m value
+  interpretExpr (Map.insert var val m) body
+
+interpretExpr m (t, LiteralAExpr value) = do
+  var <- newVar (expFamForType t)
+  newConstFactor var value
+  return var
 
