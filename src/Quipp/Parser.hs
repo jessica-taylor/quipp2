@@ -12,7 +12,7 @@ data TypeExpr = ConstructorTypeExpr String | AppTypeExpr TypeExpr TypeExpr | Var
 
 wordChar = satisfy (\x -> isAlphaNum x || x == '_')
 
-keywords = ["data", "let", "case", "of"]
+keywords = ["data", "let", "in", "case", "of"]
 
 infixl 1 ^>>
 
@@ -30,6 +30,8 @@ a >>++ b = do
 
 withWhitespace p = p ^>> spaces
 
+token = withWhitespace . string
+
 upperId = withWhitespace ((:) <$> satisfy isUpper <*> many wordChar)
 lowerId = withWhitespace $ do
   id <- (:) <$> satisfy isUpper <*> many wordChar
@@ -43,7 +45,7 @@ literalDouble = (LiteralExpr . DoubleValue . read) <$> (many (satisfy isDigit) >
 
 -- literalString = (read :: String -> String) <$> (string "\"" >>++ many stringChar >>++ string "\"")
 
-withParens p = withWhitespace (string "(") >> p ^>> withWhitespace (string ")")
+withParens p = token "(" >> p ^>> token ")"
 
 varExpr = VarExpr <$> lowerId
 
@@ -56,28 +58,38 @@ applicationExpr = foldl1 AppExpr <$> withWhitespace (many atomExpr)
 
 
 lambdaExpr = do
-  withWhitespace (string "\\")
+  token "\\"
   paramNames <- many lowerId
-  withWhitespace (string "->")
+  token "->"
   body <- expr
   return $ foldr LambdaExpr body paramNames
 
-
-expr = lambdaExpr <|> applicationExpr
-
-data Declaration = AssignmentDeclaration String Expr
-
-assignmentDeclaration = do
+letExpr = do
+  token "let"
   var <- lowerId
-  args <- many lowerId
-  withWhitespace (string "=")
+  token "="
+  value <- expr
+  token "in"
   body <- expr
-  withWhitespace (string ";")
-  return $ AssignmentDeclaration var (foldr LambdaExpr body args)
+  return $ LetExpr var value body
 
-declaration = assignmentDeclaration
 
-toplevel = many declaration
+
+expr = letExpr <|> lambdaExpr <|> applicationExpr
+
+-- data Declaration = AssignmentDeclaration String Expr
+-- 
+-- assignmentDeclaration = do
+--   var <- lowerId
+--   args <- many lowerId
+--   token "="
+--   body <- expr
+--   token ";"
+--   return $ AssignmentDeclaration var (foldr LambdaExpr body args)
+-- 
+-- declaration = assignmentDeclaration
+-- 
+-- toplevel = many declaration
 
 -- atomType = withParens anyType <|> fmap VarTypeExpr lowerId <|> fmap ConstructorTypeExpr upperId
 
