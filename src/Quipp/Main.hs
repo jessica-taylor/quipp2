@@ -6,6 +6,8 @@ import Control.Monad.Trans (lift)
 import Data.Maybe (fromJust)
 import Data.Random (RVar, RVarT, runRVarTWith, StdRandom(StdRandom))
 import Text.ParserCombinators.Parsec
+import Data.Map (Map)
+import qualified Data.Map as Map
 
 import Quipp.ExpFam
 import Quipp.Factor
@@ -92,9 +94,15 @@ main = do
         case parse toplevel "test.quipp" contents of
           Left err -> error $ show err
           Right result -> result
-      typed = typeInfer (toHindleyMilnerContext defaultContext) resultExpr
+      typed = 
+        case typeInfer (toHindleyMilnerContext defaultContext) resultExpr of
+          Left err -> error err
+          Right result -> result
+      builder = interpretExpr (toInterpretContext defaultContext) typed
+      graph = fst $ runGraphBuilder builder
   print resultExpr
   print typed
+  print (Map.keys (factorGraphTemplateVars graph))
   -- x <- runRVarTWith (\(Just x) -> return x) stateList2 StdRandom
   -- mapM_ print $ take 10 x
   -- -- x <- runRVarTWith (\(Just x) -> return x) getStateList2 StdRandom

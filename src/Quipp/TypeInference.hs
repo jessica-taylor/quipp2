@@ -272,3 +272,5 @@ defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b, c))) [
   ]
 
 toHindleyMilnerContext x = (Map.map fst x, Map.empty)
+
+toInterpretContext x = Map.map snd x
