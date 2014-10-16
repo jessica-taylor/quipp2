@@ -19,10 +19,12 @@ data AdtDefinition = AdtDefinition String [String] [(String, [TypeExpr])] derivi
 
 data PatternExpr = VarPExpr String | ConstrPExpr String [PatternExpr] deriving (Eq, Ord, Show)
 
+-- Expressions annotated by type.
 data AnnotatedExprBody = VarAExpr String | LambdaAExpr String TypeExpr AnnotatedExpr | AppAExpr AnnotatedExpr AnnotatedExpr | LetAExpr String AnnotatedExpr AnnotatedExpr | LiteralAExpr Value | AdtAExpr AdtDefinition AnnotatedExpr | CaseAExpr AnnotatedExpr [(PatternExpr, AnnotatedExpr)] deriving (Eq, Ord, Show)
 
 type AnnotatedExpr = (TypeExpr, AnnotatedExprBody)
 
+-- Un-annotated expressions.
 data Expr = VarExpr String | LambdaExpr String Expr | AppExpr Expr Expr | LetExpr String Expr Expr | LiteralExpr Value | AdtExpr AdtDefinition Expr | CaseExpr Expr [(PatternExpr, Expr)] deriving (Eq, Ord, Show)
 
 type TypeId = Int
