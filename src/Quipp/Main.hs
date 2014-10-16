@@ -92,7 +92,7 @@ main = do
         case parse toplevel "test.quipp" contents of
           Left err -> error $ show err
           Right result -> result
-      typed = hindleyMilner (toHindleyMilnerContext defaultContext) resultExpr
+      typed = typeInfer (toHindleyMilnerContext defaultContext) resultExpr
   print resultExpr
   print typed
   -- x <- runRVarTWith (\(Just x) -> return x) stateList2 StdRandom

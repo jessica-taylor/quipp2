@@ -1,3 +1,5 @@
+{-# LANGUAGE TupleSections #-}
+
 module Quipp.TypeInference where
 
 import Data.Map (Map)
@@ -5,7 +7,7 @@ import qualified Data.Map as Map
 import Control.Applicative ((<$>), (<*>))
 import Control.Monad (liftM, zipWithM, forM)
 import Control.Monad.State (get, put)
-import Control.Monad.State.Lazy (StateT)
+import Control.Monad.State.Lazy (StateT, runStateT)
 import Control.Monad.Trans (lift)
 
 import Quipp.ExpFam
@@ -55,6 +57,19 @@ reduceTypeDeep t = do
   case t' of
     AppTExpr fun arg -> AppTExpr <$> reduceTypeDeep fun <*> reduceTypeDeep arg
     other -> return other
+
+reduceTypesInAnnotatedExpr :: AnnotatedExpr -> TypeCheck AnnotatedExpr
+reduceTypesInAnnotatedExpr (t, abody) = do
+  t' <- reduceTypeDeep t
+  abody' <- case abody of
+    LambdaAExpr param typ body ->
+      LambdaAExpr param <$> reduceTypeDeep typ <*> reduceTypesInAnnotatedExpr body
+    AppAExpr fun arg -> AppAExpr <$> reduceTypesInAnnotatedExpr fun <*> reduceTypesInAnnotatedExpr arg
+    LetAExpr var value body -> LetAExpr var <$> reduceTypesInAnnotatedExpr value <*> reduceTypesInAnnotatedExpr body
+    AdtAExpr defn body -> AdtAExpr defn <$> reduceTypesInAnnotatedExpr body
+    CaseAExpr value cases -> CaseAExpr <$> reduceTypesInAnnotatedExpr value <*> mapM (\(pat, body) -> (pat,) <$> reduceTypesInAnnotatedExpr body) cases
+    other -> return other
+  return (t', abody')
 
 
 unifyReduced :: TypeExpr -> TypeExpr -> TypeCheck ()
@@ -174,6 +189,12 @@ hindleyMilner ctx@(varctx, typectx) (CaseExpr value cases) = do
     return (pat, bodyAExpr)
   return (resultType, CaseAExpr valueAExpr annCases)
 
+typeInfer :: HindleyMilnerContext -> Expr -> Either String AnnotatedExpr
+typeInfer ctx expr = case runStateT (hindleyMilner ctx expr >>= reduceTypesInAnnotatedExpr) (Map.empty, 0) of
+  Left err -> Left err
+  Right (ex, state) -> Right ex
+  
+
 
 -- perhaps the rest should be split up?
 
@@ -242,6 +263,7 @@ defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b, c))) [
    return $ LambdaGraphValue $ \(VarGraphValue v1) ->
      return $ LambdaGraphValue $ \(VarGraphValue v2) ->
        liftM VarGraphValue $ conditionEqual v1 v2),
+  ("uniformBool", return $ functionType (ConstTExpr "Bool") (ConstTExpr "Bool"), return $ LambdaGraphValue $ \_ -> liftM VarGraphValue $ newVar boolExpFamValue),
   ("true", return (ConstTExpr "Bool"), liftM VarGraphValue $ constValue boolExpFamValue $ BoolValue True),
   ("false", return (ConstTExpr "Bool"), liftM VarGraphValue $ constValue boolExpFamValue $ BoolValue False),
   ("boolToDoubleFun", return (functionType (ConstTExpr "Bool") $ functionType (ConstTExpr "Bool") (ConstTExpr "Double")), return $ LambdaGraphValue $ \_ -> do
