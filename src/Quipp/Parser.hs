@@ -1,5 +1,5 @@
 {-# LANGUAGE NoMonomorphismRestriction #-}
-module Quipp.Parser where
+module Quipp.Parser (toplevel) where
 
 import Control.Applicative ((<$>), (<*>))
 import Data.Char
@@ -132,4 +132,6 @@ adtExpr = do
   return $ AdtExpr (AdtDefinition typeName paramNames cases) body
 
 
-expr = letExpr <|> lambdaExpr <|> applicationExpr <|> adtExpr <|> caseExpr
+expr = try letExpr <|> try lambdaExpr <|> try applicationExpr <|> try adtExpr <|> try caseExpr
+
+toplevel = spaces >> expr
