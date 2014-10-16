@@ -1,0 +1,13 @@
+notes on adts
+
+
+good forms of recursion
+
+catamorphisms:
+
+f _ _ _ _ x = blah blah only call f on subparts of x
+
+
+anamorphism:
+
+f _ = CoConstr (anything here including f calls)

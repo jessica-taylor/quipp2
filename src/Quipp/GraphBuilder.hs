@@ -2,7 +2,7 @@
 module Quipp.GraphBuilder where
 
 import Control.Monad.State (get, put)
-import Control.Monad.State.Lazy (State)
+import Control.Monad.State.Lazy (State, runState)
 import Data.Maybe (fromJust)
 
 
@@ -17,10 +17,25 @@ data GraphBuilderState v = GraphBuilderState {
   gbsFactors :: [(FactorId, Either (Factor v) RandFunId, [VarId])],
   gbsNextVarId :: VarId,
   gbsNextRandFunId :: RandFunId,
-  gbsNextFactorId :: FactorId
+  gbsNextFactorId :: FactorId,
+  gbsVarReplacements :: Map VarId VarId
 }
 
 type GraphBuilder v = State (GraphBuilderState v)
+
+runGraphBuilder :: GraphBuilder v a -> (FactorGraphTemplate v, a)
+runGraphBuilder gb =
+  let initState = GraphBuilderState {
+          gbsVars = [],
+          gbsRandFuns = [],
+          gbsFactors = [],
+          gbsNextVarId = 0,
+          gbsNextRandFunId = 0,
+          gbsNextFactorId = 0
+        }
+      (endState, x) = runState gb initState
+      templ = makeFactorGraphTemplate (gbsVars endState) (gbsRandFuns endState) (gbsFactors endState)
+  in (templ, x)
 
 
 newVar :: ExpFam v -> GraphBuilder v VarId
@@ -29,6 +44,13 @@ newVar ef = do
   let v = gbsNextVarId s
   put s { gbsNextVarId = v + 1, gbsVars = (v, ef) : gbsVars s }
   return v
+
+resolveVar :: VarId -> GraphBuilder v VarId
+resolveVar varid = do
+  s <- get
+  case Map.lookup varid (gbsVarReplacements s) of
+    Just rep -> rep
+    Nothing -> varid
 
 newRandFun :: ExpFam v -> [ExpFam v] -> GraphBuilder v RandFunId
 newRandFun ef argefs = do
@@ -41,7 +63,8 @@ newGeneralFactor :: Either (Factor v) RandFunId -> [VarId] -> GraphBuilder v Fac
 newGeneralFactor fac args = do
   s <- get
   let f = gbsNextFactorId s
-  put s { gbsNextFactorId = f + 1, gbsFactors = (f, fac, args) : gbsFactors s }
+  args' <- mapM resolveVar args
+  put s { gbsNextFactorId = f + 1, gbsFactors = (f, fac, args') : gbsFactors s }
   return f
 
 newRandFunFactor :: RandFunId -> [VarId] -> GraphBuilder v FactorId
@@ -52,7 +75,8 @@ newSampleFromRandFun rf args = do
   s <- get
   let ef = head [e | (rfid, e, _) <- gbsRandFuns s, rfid == rf]
   v <- newVar ef
-  newRandFunFactor rf (v:args)
+  args' <- mapM resolveVar args
+  newRandFunFactor rf (v:args')
   return v
 
 newFactor :: Factor v -> [VarId] -> GraphBuilder v FactorId
@@ -61,8 +85,27 @@ newFactor f args = newGeneralFactor (Left f) args
 newConstFactor :: Eq v => VarId -> v -> GraphBuilder v FactorId
 newConstFactor var value = do
   s <- get
-  let ef = fromJust $ lookup var $ gbsVars s
-  newFactor (constFactor ef value) [var]
+  var' <- resolveVar var
+  let ef = fromJust $ lookup var' $ gbsVars s
+  newFactor (constFactor ef value) [var']
+
+constValue :: Eq v => ExpFam v -> v -> GraphBuilder v VarId
+constValue ef value = do
+  v <- newVar ef
+  newConstFactor v value
+  return v
+
+conditionEqual :: VarId -> VarId -> GraphBuilder v VarId
+conditionEqual v1 v2 = do
+  s <- get
+  let replace varid | varid == v2 = v1
+                    | otherwise = varid
+  put $ s {
+      gbsVars = filter ((/= v2) . fst) (gbsVars s),
+      gbsFactors = [(a, b, vars) | (a, b, map replace vars) <- (gbsFactors s)],
+      gbsVarReplacements = Map.insert v2 v1 (gbsVarReplacements s)
+    }
+  return v1
 
 {-
 f <- newRandFun gaussianExpFam [categoricalExpFam 2]

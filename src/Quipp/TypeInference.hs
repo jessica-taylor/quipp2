@@ -15,11 +15,13 @@ import Quipp.Value
 
 data TypeExpr = VarTExpr String | ConstTExpr String | AppTExpr TypeExpr TypeExpr deriving (Eq, Ord, Show)
 
-data AnnotatedExprBody = VarAExpr String | LambdaAExpr String TypeExpr AnnotatedExpr | AppAExpr AnnotatedExpr AnnotatedExpr | LetAExpr String AnnotatedExpr AnnotatedExpr | LiteralAExpr Value deriving (Eq, Ord, Show)
+data AdtDefinition = AdtDefinition String [String] [(String, [TypeExpr])]
+
+data AnnotatedExprBody = VarAExpr String | LambdaAExpr String TypeExpr AnnotatedExpr | AppAExpr AnnotatedExpr AnnotatedExpr | LetAExpr String AnnotatedExpr AnnotatedExpr | LiteralAExpr Value | AdtExpr AdtDefinition Expr deriving (Eq, Ord, Show)
 
 type AnnotatedExpr = (TypeExpr, AnnotatedExprBody)
 
-data Expr = VarExpr String | LambdaExpr String Expr | AppExpr Expr Expr | LetExpr String Expr Expr | LiteralExpr Value deriving (Eq, Ord, Show)
+data Expr = VarExpr String | LambdaExpr String Expr | AppExpr Expr Expr | LetExpr String Expr Expr | LiteralExpr Value | AdtExpr AdtDefinition Expr deriving (Eq, Ord, Show)
 
 type TypeId = Int
 
@@ -94,16 +96,17 @@ cloneWithNewVars :: TypeExpr -> TypeCheck TypeExpr
 cloneWithNewVars = liftM fst . cloneWithNewVars' Map.empty
 
 
-hindleyMilner :: (String -> TypeCheck TypeExpr) -> Expr -> TypeCheck AnnotatedExpr
+type hindleyMilnerContext = (Map String (TypeCheck TypeExpr), Map String TypeExpr)
 
-hindleyMilner ctx (VarExpr v) = do
-  t <- ctx v
-  return (t, VarAExpr v)
+hindleyMilner :: HindleyMilnerContext -> Expr -> TypeCheck AnnotatedExpr
 
-hindleyMilner ctx (LambdaExpr var body) = do
+hindleyMilner (vars, _) (VarExpr v) = case Map.lookup v vars of
+  Nothing -> lift (Left $ "Unknown variable " ++ v)
+  Just t -> return (t, VarAExpr v)
+
+hindleyMilner (varctx, typectx) (LambdaExpr var body) = do
   argType <- liftM VarTExpr newTypeId
-  let newCtx v = if v == var then return argType else ctx v
-  bodyAExpr@(bodyType, _) <- hindleyMilner newCtx body
+  bodyAExpr@(bodyType, _) <- hindleyMilner (Map.insert var (return argType) varctx, typectx) body
   return (functionType argType bodyType, LambdaAExpr var argType bodyAExpr)
 
 hindleyMilner ctx (AppExpr fun arg) = do
@@ -113,33 +116,46 @@ hindleyMilner ctx (AppExpr fun arg) = do
   unify funType (functionType argType resultType)
   return (resultType, AppAExpr funAExpr argAExpr)
 
-hindleyMilner ctx (LetExpr var value body) = do
+hindleyMilner (varctx, typectx) (LetExpr var value body) = do
   valueAExpr@(valueType, _) <- hindleyMilner ctx value
-  let newCtx v = if v == var then cloneWithNewVars valueType else ctx v
-  bodyAExpr@(bodyType, _) <- hindleyMilner newCtx body
+  bodyAExpr@(bodyType, _) <- hindleyMilner (Map.insert var (cloneWithNewVars valueType) varctx, typectx) body
   return (bodyType, LetAExpr var valueAExpr bodyAExpr)
 
 hindleyMilner ctx (LiteralExpr lit) =
   let t = case lit of
             DoubleValue _ -> "Double"
-            CategoricalValue _ -> "Categorical"
+            BoolValue _ -> "Bool"
   in return (ConstTExpr t, LiteralAExpr lit)
 
-data GraphValue = VarGraphValue VarId | LambdaGraphValue (GraphValue -> GraphBuilder Value GraphValue)
+hindleyMilner (varctx, typectx) (AdtExpr defn@(AdtDefinition typeName params cases) body) =
+  let newVars = [(caseName, foldr functionType (foldl AppTExpr typeName params) caseFieldTypes ) | (caseName, caseFieldTypes) <- cases]
+      varctx' = foldr (uncurry Map.insert) varctx newVars
+  in do
+    body@(bodyType, _) <- hindleyMilner (varctx', typectx) body
+    return (bodyType, AdtAExpr defn body)
+
+
+-- perhaps the rest should be split up?
+
+data GraphValue = VarGraphValue VarId | LambdaGraphValue (GraphValue -> GraphBuilder Value GraphValue) | AdtGraphValue VarId [[GraphValue]]
 
 fromDoubleValue (DoubleValue a) = a
 doublePromoter = (DoubleValue, fromDoubleValue)
 gaussianExpFamValue = promoteExpFam doublePromoter gaussianExpFam
 
+boolPromoter = (BoolValue . (== 1), \(BoolValue x) -> if x then 1 else 0)
+boolExpFamValue = promoteExpFam boolPromoter (categoricalExpFam 2)
+
 expFamForType :: TypeExpr -> ExpFam Value
 expFamForType (ConstTExpr "Double") = gaussianExpFamValue
+expFamForType (ConstTExpr "Bool") = boolExpFamValue
 expFamForType t = error $ "Can't get exponential family for type " ++ show t
 
-interpretExpr :: Map String GraphValue -> AnnotatedExpr -> GraphBuilder Value GraphValue
+interpretExpr :: Map String (GraphBuilder Value GraphValue) -> AnnotatedExpr -> GraphBuilder Value GraphValue
 
 interpretExpr m (_, VarAExpr var) = case Map.lookup var m of
   Nothing -> error ("cannot find variable " ++ var)
-  Just val -> return val
+  Just val -> val
 
 interpretExpr m (_, LambdaAExpr param _ body) = return $ LambdaGraphValue $
   \arg -> interpretExpr (Map.insert param arg m) body
@@ -152,10 +168,38 @@ interpretExpr m (_, AppAExpr fun arg) = do
 
 interpretExpr m (_, LetAExpr var value body) = do
   val <- interpretExpr m value
-  interpretExpr (Map.insert var val m) body
+  interpretExpr (Map.insert var (return val) m) body
 
 interpretExpr m (t, LiteralAExpr value) = do
   var <- newVar (expFamForType t)
   newConstFactor var value
   return $ VarGraphValue var
+
+makeCaseFunction :: String -> [TypeExpr] -> GraphBuilder Value GraphValue
+makeCaseFunction caseName caseTypes = go [] caseTypes
+  where go fields [] = AdtGraphValue caseName fields
+        go 
+
+interpretExpr m (t, AdtAExpr (AdtDefinition typeName typeParams cases) body) =
+  let caseFunction caseName caseTypes =
+    newvars = [(caseName, caseFunction caseName caseTypes) | (caseName, caseTypes) <- cases]
+  interpretExpr (foldr (uncurry Map.insert) m' newvars) body
+
+
+defaultContext :: Map String (TypeCheck TypeExpr, GraphBuilder Value GraphValue)
+defaultContext = Map.fromList [
+  -- unify :: a -> a -> a
+  -- conditions on its arguments being equal, returning one of them
+  ("unify",
+   do a <- newTypeId
+      return $ functionType (VarTExpr a) $ functionType (VarTExpr a) $ VarTExpr a},
+   return $ LambdaGraphValue $ \(VarGraphValue v1) ->
+     return $ LambdaGraphValue $ \(VarGraphValue v2) ->
+       liftM VarGraphValue $ conditionEqual v1 v2
+  ("true", return (ConstTExpr "Bool"), constValue $ BoolValue True),
+  ("false", return (ConstTExpr "Bool"), constValue $ BoolValue False),
+  ("boolToDoubleFun", return (functionType (ConstTExpr "Bool") $ functionType (ConstTExpr "Bool") (ConstTExpr "Double")), return $ LambdaGraphValue $ \_ -> do
+    rf <- newRandFun gaussianExpFamValue [boolExpFamValue]
+    return $ LambdaGraphValue $ \boolvar -> newSampleFromRandFun rf [boolvar])
+  ]
 

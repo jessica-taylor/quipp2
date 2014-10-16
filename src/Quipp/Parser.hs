@@ -38,9 +38,21 @@ lowerId = withWhitespace $ do
   id <- (:) <$> satisfy isUpper <*> many wordChar
   if elem id keywords then fail "Keyword is not an ID" else return id
 
+varTypeExpr = VarTExpr <$> lowerId
+
+constTypeExpr = ConstTExpr <$> upperId
+
+atomTypeExpr = varTypeExpr <|> constTypeExpr <|> withParens typeExpr
+
+applicationTypeExpr = foldl1 AppTExpr <$> many1 atomTypeExpr
+
+functionTypeExpr = foldr1 functionType <$> splitBy1 applicationTypeExpr "->"
+
+typeExpr = functionTypeExpr
+
 -- literalInt = (read :: String -> Integer) <$> withWhitespace (many1 $ satisfy isDigit)
 
-literalDouble = (LiteralExpr . DoubleValue . read) <$> (many (satisfy isDigit) >>++ string "." >>++ many (satisfy isDigit))
+literalDouble = (LiteralExpr . DoubleValue . read) <$> (maybe (string "-") >>++ many (satisfy isDigit) >>++ string "." >>++ many (satisfy isDigit))
 
 -- stringChar = (return <$> satisfy (\x -> x /= '"' && x /= '\\')) <|> (string "\\" >>++ (return <$> satisfy (`elem` "0abfnrtv\"\\")))
 
@@ -48,11 +60,11 @@ literalDouble = (LiteralExpr . DoubleValue . read) <$> (many (satisfy isDigit) >
 
 withParens p = spacedString "(" >> p ^>> spacedString ")"
 
-varExpr = VarExpr <$> lowerId
+varExpr = VarExpr <$> (lowerId <|> upperId)
 
 atomExpr = literalDouble <|> varExpr <|> withParens expr
 
-applicationExpr = foldl1 AppExpr <$> withWhitespace (many atomExpr)
+applicationExpr = foldl1 AppExpr <$> many1 atomExpr
 
 
 -- no operators for now
@@ -70,9 +82,26 @@ letExpr = do
   var <- lowerId
   spacedString "="
   value <- expr
-  spacedString "in"
+  spacedString ";"
   body <- expr
   return $ LetExpr var value body
+
+adtCase = do
+  constr <- upperId
+  fields <- many typeExpr
+  return (constr, fields)
+
+adtExpr = do
+  spacedString "data"
+  typeName <- many upperId
+  paramNames <- many lowerId
+  spacedString "="
+  cases <- dataCase `splitBy` spacedString "|"
+  spacedString ";"
+  body <- expr
+  return $ AdtExpr (AdtDefinition typeName paramNames cases) body
+
+
 
 
 

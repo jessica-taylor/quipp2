@@ -10,8 +10,13 @@ import Quipp.ExpFam
 import Quipp.Factor
 import Quipp.Vmp
 import Quipp.Util
+import Quipp.Value
+import Quipp.GraphBuilder
+import Quipp.Parser
+import Quipp.TypeChecker
 
 
+{-
 fromDoubleValue (DoubleValue a) = a
 
 doublePromoter = (DoubleValue, fromDoubleValue)
@@ -44,6 +49,8 @@ constFactorVars = [(i + length values, Left (constFactor gaussianExpFam2 v), [i 
 --
 
 factorGraphTempl = makeFactorGraphTemplate (clusterVars ++ valueVars) gaussianRandFunctions (gaussianFactorVars ++ constFactorVars)
+
+-}
 
 type FST = (FactorGraphState Value, FactorGraphParams)
 
