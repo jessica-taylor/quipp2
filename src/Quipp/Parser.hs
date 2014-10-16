@@ -1,6 +1,7 @@
 {-# LANGUAGE NoMonomorphismRestriction #-}
 module Quipp.Parser (toplevel) where
 
+import Debug.Trace
 import Control.Applicative ((<$>), (<*>))
 import Data.Char
 import Text.Parsec.Char
@@ -10,10 +11,11 @@ import Text.Parsec.Prim
 import Quipp.TypeInference
 import Quipp.Value
 
+keywords = ["data", "let", "in", "case", "of"]
 
 wordChar = satisfy (\x -> isAlphaNum x || x == '_')
 
-keywords = ["data", "let", "in", "case", "of"]
+wordBreak = notFollowedBy wordChar
 
 infixl 1 ^>>
 
@@ -33,10 +35,15 @@ withWhitespace p = p ^>> spaces
 
 spacedString = withWhitespace . string
 
-upperId = withWhitespace ((:) <$> satisfy isUpper <*> many wordChar)
+withBreak p = p ^>> wordBreak ^>> spaces
 
-lowerId = withWhitespace $ do
-  id <- (:) <$> satisfy isUpper <*> many wordChar
+stringWithBreak = withBreak . string
+
+
+upperId = withBreak ((:) <$> satisfy isUpper <*> many wordChar)
+
+lowerId = withBreak $ do
+  id <- (:) <$> satisfy isLower <*> many wordChar
   if elem id keywords then fail "Keyword is not an ID" else return id
 
 varTypeExpr = VarTExpr <$> lowerId
@@ -53,7 +60,7 @@ typeExpr = functionTypeExpr
 
 -- literalInt = (read :: String -> Integer) <$> withWhitespace (many1 $ satisfy isDigit)
 
-literalDouble = withWhitespace $ (LiteralExpr . DoubleValue . read) <$> ((string "-" <|> string "") >>++ many (satisfy isDigit) >>++ string "." >>++ many (satisfy isDigit))
+literalDouble = withBreak $ (LiteralExpr . DoubleValue . read) <$> ((string "-" <|> string "") >>++ many (satisfy isDigit) >>++ string "." >>++ many (satisfy isDigit))
 
 -- stringChar = (return <$> satisfy (\x -> x /= '"' && x /= '\\')) <|> (string "\\" >>++ (return <$> satisfy (`elem` "0abfnrtv\"\\")))
 
@@ -79,8 +86,9 @@ lambdaExpr = do
   return $ foldr LambdaExpr body paramNames
 
 letExpr = do
-  spacedString "let"
+  stringWithBreak "let"
   var <- lowerId
+  -- TODO define functions?
   spacedString "="
   value <- expr
   spacedString ";"
@@ -108,7 +116,7 @@ singleCaseExpr = do
   return (pat, body)
 
 caseExpr = do
-  spacedString "case"
+  stringWithBreak "case"
   value <- expr
   spacedString "{"
   cases <- many singleCaseExpr
@@ -122,7 +130,7 @@ adtCase = do
   return (constr, fields)
 
 adtExpr = do
-  spacedString "data"
+  stringWithBreak "data"
   typeName <- upperId
   paramNames <- many lowerId
   spacedString "="

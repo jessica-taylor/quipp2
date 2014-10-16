@@ -1,15 +1,14 @@
-
-let fun = boolToDoubleFun true in
-let b1 = uniformBool true in
-let b2 = uniformBool true in
-let b3 = uniformBool true in
-let b4 = uniformBool true in
-let b5 = uniformBool true in
-let b6 = uniformBool true in
-let x1 = unify 0.1 (fun b1) in
-let x2 = unify 0.2 (fun b2) in
-let x3 = unify 0.3 (fun b3) in
-let x4 = unify 3.1 (fun b4) in
-let x5 = unify 3.2 (fun b5) in
-let x6 = unify 3.3 (fun b6) in
+let fun = boolToDoubleFun true;
+let b1 = uniformBool true;
+let b2 = uniformBool true;
+let b3 = uniformBool true;
+let b4 = uniformBool true;
+let b5 = uniformBool true;
+let b6 = uniformBool true;
+let x1 = unify 0.1 (fun b1);
+let x2 = unify 0.2 (fun b2);
+let x3 = unify 0.3 (fun b3);
+let x4 = unify 3.1 (fun b4);
+let x5 = unify 3.2 (fun b5);
+let x6 = unify 3.3 (fun b6);
 5.6
