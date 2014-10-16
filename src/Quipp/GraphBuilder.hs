@@ -4,6 +4,8 @@ module Quipp.GraphBuilder where
 import Control.Monad.State (get, put)
 import Control.Monad.State.Lazy (State, runState)
 import Data.Maybe (fromJust)
+import Data.Map (Map)
+import qualified Data.Map as Map
 
 
 import Quipp.ExpFam
@@ -31,9 +33,10 @@ runGraphBuilder gb =
           gbsFactors = [],
           gbsNextVarId = 0,
           gbsNextRandFunId = 0,
-          gbsNextFactorId = 0
+          gbsNextFactorId = 0,
+          gbsVarReplacements = Map.empty
         }
-      (endState, x) = runState gb initState
+      (x, endState) = runState gb initState
       templ = makeFactorGraphTemplate (gbsVars endState) (gbsRandFuns endState) (gbsFactors endState)
   in (templ, x)
 
@@ -49,8 +52,8 @@ resolveVar :: VarId -> GraphBuilder v VarId
 resolveVar varid = do
   s <- get
   case Map.lookup varid (gbsVarReplacements s) of
-    Just rep -> rep
-    Nothing -> varid
+    Just rep -> return rep
+    Nothing -> return varid
 
 newRandFun :: ExpFam v -> [ExpFam v] -> GraphBuilder v RandFunId
 newRandFun ef argefs = do
@@ -102,7 +105,7 @@ conditionEqual v1 v2 = do
                     | otherwise = varid
   put $ s {
       gbsVars = filter ((/= v2) . fst) (gbsVars s),
-      gbsFactors = [(a, b, vars) | (a, b, map replace vars) <- (gbsFactors s)],
+      gbsFactors = [(a, b, map replace vars) | (a, b, vars) <- gbsFactors s],
       gbsVarReplacements = Map.insert v2 v1 (gbsVarReplacements s)
     }
   return v1

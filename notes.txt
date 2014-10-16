@@ -11,3 +11,16 @@ f _ _ _ _ x = blah blah only call f on subparts of x
 anamorphism:
 
 f _ = CoConstr (anything here including f calls)
+
+
+what can values be?
+
+AdtDistr VarId [[GraphValue]]
+
+
+what if a case is applied to AdtDistr?
+- expand every case, using the GraphValues in the AdtDistr as the values
+- at the end, a "select only this one" factor
+
+but what if the returned values themselves are adts?
+then hook up factors of case return values to the result

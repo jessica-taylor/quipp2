@@ -34,6 +34,7 @@ withWhitespace p = p ^>> spaces
 spacedString = withWhitespace . string
 
 upperId = withWhitespace ((:) <$> satisfy isUpper <*> many wordChar)
+
 lowerId = withWhitespace $ do
   id <- (:) <$> satisfy isUpper <*> many wordChar
   if elem id keywords then fail "Keyword is not an ID" else return id
@@ -46,13 +47,13 @@ atomTypeExpr = varTypeExpr <|> constTypeExpr <|> withParens typeExpr
 
 applicationTypeExpr = foldl1 AppTExpr <$> many1 atomTypeExpr
 
-functionTypeExpr = foldr1 functionType <$> splitBy1 applicationTypeExpr "->"
+functionTypeExpr = foldr1 functionType <$> sepBy1 applicationTypeExpr (spacedString "->")
 
 typeExpr = functionTypeExpr
 
 -- literalInt = (read :: String -> Integer) <$> withWhitespace (many1 $ satisfy isDigit)
 
-literalDouble = (LiteralExpr . DoubleValue . read) <$> (maybe (string "-") >>++ many (satisfy isDigit) >>++ string "." >>++ many (satisfy isDigit))
+literalDouble = withWhitespace $ (LiteralExpr . DoubleValue . read) <$> ((string "-" <|> string "") >>++ many (satisfy isDigit) >>++ string "." >>++ many (satisfy isDigit))
 
 -- stringChar = (return <$> satisfy (\x -> x /= '"' && x /= '\\')) <|> (string "\\" >>++ (return <$> satisfy (`elem` "0abfnrtv\"\\")))
 
@@ -86,6 +87,35 @@ letExpr = do
   body <- expr
   return $ LetExpr var value body
 
+varPatternExpr = VarPExpr <$> lowerId
+
+constrPatternExpr = do
+  constr <- upperId
+  return $ ConstrPExpr constr []
+
+atomPatternExpr = varPatternExpr <|> constrPatternExpr <|> withParens patternExpr
+
+appPatternExpr = foldl1 makeApp <$> many1 atomPatternExpr
+  where makeApp (ConstrPExpr constr fields) x = ConstrPExpr constr (fields ++ [x])
+
+patternExpr = appPatternExpr
+
+singleCaseExpr = do
+  pat <- patternExpr
+  spacedString "->"
+  body <- expr
+  spacedString ";"
+  return (pat, body)
+
+caseExpr = do
+  spacedString "case"
+  value <- expr
+  spacedString "{"
+  cases <- many singleCaseExpr
+  spacedString "}"
+  return $ CaseExpr value cases
+
+
 adtCase = do
   constr <- upperId
   fields <- many typeExpr
@@ -93,37 +123,13 @@ adtCase = do
 
 adtExpr = do
   spacedString "data"
-  typeName <- many upperId
+  typeName <- upperId
   paramNames <- many lowerId
   spacedString "="
-  cases <- dataCase `splitBy` spacedString "|"
+  cases <- adtCase `sepBy` spacedString "|"
   spacedString ";"
   body <- expr
   return $ AdtExpr (AdtDefinition typeName paramNames cases) body
 
 
-
-
-
-expr = letExpr <|> lambdaExpr <|> applicationExpr
-
--- data Declaration = AssignmentDeclaration String Expr
--- 
--- assignmentDeclaration = do
---   var <- lowerId
---   args <- many lowerId
---   spacedString "="
---   body <- expr
---   spacedString ";"
---   return $ AssignmentDeclaration var (foldr LambdaExpr body args)
--- 
--- declaration = assignmentDeclaration
--- 
--- toplevel = many declaration
-
--- atomType = withParens anyType <|> fmap VarTypeExpr lowerId <|> fmap ConstructorTypeExpr upperId
-
-
-
-
-
+expr = letExpr <|> lambdaExpr <|> applicationExpr <|> adtExpr <|> caseExpr
