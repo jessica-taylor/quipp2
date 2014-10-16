@@ -249,3 +249,4 @@ defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b, c))) [
     return $ LambdaGraphValue $ \(VarGraphValue boolvar) -> liftM VarGraphValue $ newSampleFromRandFun rf [boolvar])
   ]
 
+toHindleyMilnerContext x = (Map.map fst x, Map.empty)
