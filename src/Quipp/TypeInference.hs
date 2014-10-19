@@ -2,6 +2,7 @@
 
 module Quipp.TypeInference where
 
+import Debug.Trace
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Control.Applicative ((<$>), (<*>))
@@ -37,11 +38,11 @@ type TypeCheck = StateT HindleyMilnerState (Either String)
 
 functionType a b = AppTExpr (AppTExpr (ConstTExpr "->") a) b
 
-newTypeId :: TypeCheck String
-newTypeId = do
+newTypeId :: String -> TypeCheck String
+newTypeId str = do
   (m, tid) <- get
   put (m, tid + 1)
-  return ("_typeid_" ++ show tid)
+  return ("_" ++ str ++ "_" ++ show tid)
 
 reduceTypeShallow :: TypeExpr -> TypeCheck TypeExpr
 reduceTypeShallow t@(VarTExpr v) = do
@@ -96,20 +97,25 @@ unify a b = do
   unifyReduced a' b'
 
 
-cloneWithNewVars' :: Map String String -> TypeExpr -> TypeCheck (TypeExpr, Map String String)
+cloneWithNewVarsReduced :: Map String String -> TypeExpr -> TypeCheck (TypeExpr, Map String String)
 
-cloneWithNewVars' m (VarTExpr v) = case Map.lookup v m of
+cloneWithNewVarsReduced m (VarTExpr v) = case Map.lookup v m of
   Just newvar -> return (VarTExpr newvar, m)
   Nothing -> do
-    newvar <- newTypeId
+    newvar <- newTypeId v
     return (VarTExpr newvar, Map.insert v newvar m)
 
-cloneWithNewVars' m (AppTExpr fun arg) = do
+cloneWithNewVarsReduced m (AppTExpr fun arg) = do
   (funType, m') <- cloneWithNewVars' m fun
   (argType, m'') <- cloneWithNewVars' m' arg
   return (AppTExpr funType argType, m'')
 
-cloneWithNewVars' m other = return (other, m)
+cloneWithNewVarsReduced m other = return (other, m)
+
+cloneWithNewVars' :: Map String String -> TypeExpr -> TypeCheck (TypeExpr, Map String String)
+cloneWithNewVars' m t = do
+  t' <- reduceTypeShallow t
+  cloneWithNewVarsReduced m t'
 
 cloneWithNewVars :: TypeExpr -> TypeCheck TypeExpr
 cloneWithNewVars = liftM fst . cloneWithNewVars' Map.empty
@@ -150,14 +156,14 @@ hindleyMilner (vars, _) (VarExpr v) = case Map.lookup v vars of
     return (t, VarAExpr v)
 
 hindleyMilner (varctx, typectx) (LambdaExpr var body) = do
-  argType <- liftM VarTExpr newTypeId
+  argType <- liftM VarTExpr (newTypeId "lambda_arg")
   bodyAExpr@(bodyType, _) <- hindleyMilner (Map.insert var (return argType) varctx, typectx) body
   return (functionType argType bodyType, LambdaAExpr var argType bodyAExpr)
 
 hindleyMilner ctx (AppExpr fun arg) = do
   funAExpr@(funType, _) <- hindleyMilner ctx fun
   argAExpr@(argType, _) <- hindleyMilner ctx arg
-  resultType <- liftM VarTExpr newTypeId
+  resultType <- liftM VarTExpr (newTypeId "app_result")
   unify funType (functionType argType resultType)
   return (resultType, AppAExpr funAExpr argAExpr)
 
@@ -181,7 +187,7 @@ hindleyMilner (varctx, typectx) (AdtExpr defn@(AdtDefinition typeName params cas
 
 hindleyMilner ctx@(varctx, typectx) (CaseExpr value cases) = do
   valueAExpr@(valueType, _) <- hindleyMilner ctx value
-  resultType <- liftM VarTExpr newTypeId
+  resultType <- liftM VarTExpr (newTypeId "case_result")
   annCases <- forM cases $ \(pat, body) -> do
     substs <- hindleyMilnerPattern ctx pat valueType
     bodyAExpr@(bodyType, _) <- hindleyMilner (foldr (uncurry Map.insert) varctx [(v, return t) | (v, t) <- substs], typectx) body
@@ -258,7 +264,7 @@ defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b, c))) [
   -- unify :: a -> a -> a
   -- conditions on its arguments being equal, returning one of them
   ("unify",
-   do a <- newTypeId
+   do a <- newTypeId "unify_type"
       return $ functionType (VarTExpr a) $ functionType (VarTExpr a) $ VarTExpr a,
    return $ LambdaGraphValue $ \(VarGraphValue v1) ->
      return $ LambdaGraphValue $ \(VarGraphValue v2) ->

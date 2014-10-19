@@ -94,7 +94,7 @@ main = do
         case parse toplevel "test.quipp" contents of
           Left err -> error $ show err
           Right result -> result
-      typed = 
+      typed =
         case typeInfer (toHindleyMilnerContext defaultContext) resultExpr of
           Left err -> error err
           Right result -> result
