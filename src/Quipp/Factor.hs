@@ -163,3 +163,24 @@ updateTemplateParams template origParams states = Map.mapWithKey updateParam ori
                     varExpSufStat origGraph state svarid)
           in expFamMLE ef [factorValues factorId weight state | factorId <- factorIds, (weight, state) <- states] origParam !! 30
 
+-- logOddsToProbability x = exp (x - logSumExp [0, x])
+
+ifThenElseFactor :: ExpFam v -> Factor Value
+ifThenElseFactor ef = Factor {
+    factorExpFams = [ef, categoricalExpFam 2, ef, ef],
+    -- factorLogValue = \[[n1a, n2a], [logodds], [n1b, n2b], [n1c, n2c]] ->
+    factorNatParam = fnp
+  }
+  where fnp 0 [_, [p], ea, eb] =
+          let ex = [(1 - p) * a + p * b | (a, b) <- zip ea eb]
+          in expFamSufStatToLikelihood ef ex
+        fnp 1 [ex, _, ea, eb] =
+          let da = expFamKLDivergence (expFamSufStatToLikelihood ef ex) (expFamSufStatToLikelihood ef ea)
+              db = expFamKLDivergence (expFamSufStatToLikelihood ef ex) (expFamSufStatToLikelihood ef eb)
+          in NatParam [da - db]
+        fnp 2 [ex, [p], _, eb] = case expFamSufStatToLikelihood ef ex of
+           KnownValue kv -> KnownValue kv
+           NatParam np -> NatParam $ map (*(1 - p)) np
+        fnp 3 [ex, [p], ea, _] = case expFamSufStatToLikelihood ef ex of
+           KnownValue kv -> KnownValue kv
+           NatParam np -> NatParam $ map (*p) np

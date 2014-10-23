@@ -25,6 +25,7 @@ data ExpFam v = ExpFam {
   expFamD :: Int,
   expFamSufStat :: v -> [Double],
   expFamG :: forall s. (RealFloat s, Mode s, Scalar s ~ Double) => [s] -> s,
+  expFamSufStatToLikelihood :: [Double] -> Likelihood v,
   expFamSample :: [Double] -> RVar v,
   expFamDefaultNatParam :: [Double],
   expFamFeaturesMask :: [Bool]
@@ -46,13 +47,14 @@ expFamFeaturesToSufStat ef features
           getSS (True:ms) (f:fs) = f : getSS ms fs
           getSS (False:ms) fs = 0 : getSS ms fs
           getSS _ _ = undefined
- 
+
 
 promoteExpFam :: (v -> u, u -> v) -> ExpFam v -> ExpFam u
 promoteExpFam (f, finv) ef = ExpFam {
   expFamD = expFamD ef,
   expFamSufStat = expFamSufStat ef . finv,
   expFamG = expFamG ef,
+  expFamSufStatToLikelihood = fmap f . expFamSufStatToLikelihood ef,
   expFamSample = liftM f . expFamSample ef,
   expFamDefaultNatParam = expFamDefaultNatParam ef,
   expFamFeaturesMask = expFamFeaturesMask ef
@@ -107,6 +109,10 @@ expFamMLE fam samples etaStart = trace ("\nexpFamMLE " ++ show samples) $
 
 data Likelihood v = KnownValue v | NatParam [Double] deriving (Eq, Ord, Show)
 
+instance Functor Likelihood where
+  fmap f (KnownValue v) = KnownValue (f v)
+  fmap _ (NatParam np) = NatParam np
+
 promoteLikelihood :: (v -> u, u -> v) -> Likelihood v -> Likelihood u
 promoteLikelihood (f, finv) (KnownValue v) = KnownValue (f v)
 promoteLikelihood (f, finv) (NatParam np) = NatParam np
@@ -140,11 +146,19 @@ covarianceSufStat ef (KnownValue v) = outerProduct ss ss
 covarianceSufStat ef (NatParam np) =
   hessian (expFamG ef) np
 
-mkExpFam :: [v -> Double] -> (forall s. (RealFloat s, Mode s, Scalar s ~ Double) => [s] -> s) -> ([Double] -> RVar v) -> [Double] -> [Bool] -> ExpFam v
-mkExpFam fs g sample np mask = ExpFam {
+expFamKLDivergence :: Eq v => ExpFam v -> Likelihood v -> Likelihood v -> Double
+expFamKLDivergence ef (KnownValue a) (KnownValue b) | a == b = 0.0
+                                                    | otherwise = infinity
+expFamKLDivergence ef (KnownValue a) (NatParam np) = expFamG ef np - dotProduct np (expFamSufStat ef a)
+expFamKLDivergence ef (NatParam p) (NatParam q) =
+  expFamG ef q - expFamG ef p - dotProduct (zipWith (-) q p) (expSufStat ef (NatParam p))
+
+mkExpFam :: [v -> Double] -> (forall s. (RealFloat s, Mode s, Scalar s ~ Double) => [s] -> s) -> ([Double] -> Likelihood v) -> ([Double] -> RVar v) -> [Double] -> [Bool] -> ExpFam v
+mkExpFam fs g like sample np mask = ExpFam {
   expFamD = length fs,
   expFamSufStat = \v -> map ($ v) fs,
   expFamG = g,
+  expFamSufStatToLikelihood = like,
   expFamSample = sample,
   expFamDefaultNatParam = np,
   expFamFeaturesMask = mask
@@ -152,13 +166,16 @@ mkExpFam fs g sample np mask = ExpFam {
 
 
 gaussianExpFam :: ExpFam Double
-gaussianExpFam = mkExpFam [id, (^2)] g sample [0, -0.0001] [True, False]
+gaussianExpFam = mkExpFam [id, (^2)] g like sample [0, -0.0001] [True, False]
   where g :: (RealFloat a, Mode a) => [a] -> a
         g [n1, n2] | n2 >= 0 = 0/0
                    | otherwise = let variance = -1 / (2 * n2)
                                      mean = n1 * variance
                                  in log (2 * pi * variance) / 2 + mean^2/(2 * variance)
         g x = error ("bad gaussian natural parameter: " ++ show (map realToDouble x))
+        like [ex, ex2] =
+          let var = ex2 - ex^2 in
+          if var > 0 then NatParam [ex / var, 1 / (1 * var)] else KnownValue ex
         sample :: [Double] -> RVar Double
         sample [n1, n2] = let variance = -1 / (2 * n2)
                               mean = n1 * variance
@@ -166,11 +183,12 @@ gaussianExpFam = mkExpFam [id, (^2)] g sample [0, -0.0001] [True, False]
 
 
 categoricalExpFam :: Int -> ExpFam Int
-categoricalExpFam n = mkExpFam (map ss [1 .. n-1]) g sample (replicate (n-1) 0) (replicate (n-1) True)
+categoricalExpFam n = mkExpFam (map ss [1 .. n-1]) g like sample (replicate (n-1) 0) (replicate (n-1) True)
   where ss i x = if x == i then 1.0 else 0.0
         g :: RealFloat a => [a] -> a
         g x | length x == n-1 = logSumExp (0:x)
             | otherwise = error ("bad categorical natural parameter: " ++ show (map realToDouble x))
+        like probs = undefined --halp
         sample :: [Double] -> RVar Int
         sample ns = categorical $ zip (logProbsToProbs (0:ns)) [0..]
 

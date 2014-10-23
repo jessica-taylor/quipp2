@@ -10,6 +10,9 @@ infixr 9 .:
 
 sampleRVar v = runRVar v StdRandom
 
+infinity :: Double
+infinity = read "Infinity"
+
 negInfinity :: Double
 negInfinity = read "-Infinity"
 

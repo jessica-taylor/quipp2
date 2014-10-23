@@ -247,24 +247,32 @@ interpretExpr m (t, LiteralAExpr value) = do
 
 -- interpretExpr m (t, CaseAExpr value cases) = 
 
-convexCombination _ UnitGraphValue UnitGraphValue = return UnitGraphValue
+ifThenElse _ UnitGraphValue UnitGraphValue = return UnitGraphValue
 
-convexCombination pvar (PairGraphValue a b) (PairGraphValue c d) = do
-  first <- convexCombination pvar a c
-  second <- convexCombination pvar b d
+ifThenElse pvar (PairGraphValue a b) (PairGraphValue c d) = do
+  first <- ifThenElse pvar a c
+  second <- ifThenElse pvar b d
   return $ PairGraphValue first second
 
-convexCombination pvar (EitherGraphValue p1 a b) (EitherGraphValue p2 c d) = do
-  VarGraphValue p' <- convexCombination pvar (VarGraphValue p1) (VarGraphValue p2)
-  left <- convexCombination pvar a c
-  right <- convexCombination pvar b d
+ifThenElse pvar (EitherGraphValue p1 a b) (EitherGraphValue p2 c d) = do
+  VarGraphValue p' <- ifThenElse pvar (VarGraphValue p1) (VarGraphValue p2)
+  left <- ifThenElse pvar a c
+  right <- ifThenElse pvar b d
   return $ EitherGraphValue p' left right
 
-convexCombination pvar (LambdaGraphValue f) (LambdaGraphValue g) =
+ifThenElse pvar (LambdaGraphValue f) (LambdaGraphValue g) =
   return $ LambdaGraphValue $ \x -> do
     fx <- f x
     gx <- g x
-    convexCombination pvar fx gx
+    ifThenElse pvar fx gx
+
+ifThenElse pvar (VarGraphValue v1) (VarGraphValue v2) = do
+  ef <- getVarExpFam v1
+  v3 <- newVar ef
+  newFactor (ifThenElseFactor ef) [v3, pvar, v1, v2]
+  return v3
+
+
 
 defaultContext :: Map String (TypeCheck TypeExpr, TypeExpr -> GraphBuilder Value GraphValue)
 defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b, c))) [
@@ -313,7 +321,7 @@ defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b, c))) [
        return $ LambdaGraphValue $ \(LambdaGraphValue rightHandler) -> do
          leftResult <- leftHandler leftVal
          rightResult <- rightHandler rightVal
-         convexCombination isRightVar leftResult rightResult),
+         ifThenElse isRightVar leftResult rightResult),
   ("uniformBool", return $ functionType (ConstTExpr "Bool") (ConstTExpr "Bool"), const $ return $ LambdaGraphValue $ \_ -> liftM VarGraphValue $ newVar boolExpFamValue),
   ("true", return (ConstTExpr "Bool"), const $ liftM VarGraphValue $ constValue boolExpFamValue $ BoolValue True),
   ("false", return (ConstTExpr "Bool"), const $ liftM VarGraphValue $ constValue boolExpFamValue $ BoolValue False),
