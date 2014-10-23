@@ -196,21 +196,14 @@ defaultGraphValue :: TypeExpr -> GraphBuilder Value GraphValue
 defaultGraphValue (AppTExpr (AppTExpr (ConstTExpr "pair") firstType) secondType) =
   PairGraphValue <$> defaultGraphValue firstType <*> defaultGraphValue secondType
 defaultGraphValue (AppTExpr (AppTExpr (ConstTExpr "either") leftType) rightType) =
-  EitherGraphValue <$> newVar boolExpFamValue <*> defaultGraphValue leftType <*> defaultGraphValue rightType
+  EitherGraphValue <$> newVar boolValueExpFam <*> defaultGraphValue leftType <*> defaultGraphValue rightType
 defaultGraphValue (AppTExpr (AppTExpr (ConstTExpr "->") argType) resType) =
   return $ LambdaGraphValue $ const $ defaultGraphValue argType
 defaultGraphValue other = liftM VarGraphValue $ newVar $ expFamForType other
 
-fromDoubleValue (DoubleValue a) = a
-doublePromoter = (DoubleValue, fromDoubleValue)
-gaussianExpFamValue = promoteExpFam doublePromoter gaussianExpFam
-
-boolPromoter = (BoolValue . (== 1), \(BoolValue x) -> if x then 1 else 0)
-boolExpFamValue = promoteExpFam boolPromoter (categoricalExpFam 2)
-
 expFamForType :: TypeExpr -> ExpFam Value
-expFamForType (ConstTExpr "Double") = gaussianExpFamValue
-expFamForType (ConstTExpr "Bool") = boolExpFamValue
+expFamForType (ConstTExpr "Double") = gaussianValueExpFam
+expFamForType (ConstTExpr "Bool") = boolValueExpFam
 expFamForType t = error $ "Can't get exponential family for type " ++ show t
 
 interpretPattern :: PatternExpr -> GraphValue -> GraphBuilder Value (Maybe [(String, GraphValue)])
@@ -270,7 +263,7 @@ ifThenElse pvar (VarGraphValue v1) (VarGraphValue v2) = do
   ef <- getVarExpFam v1
   v3 <- newVar ef
   newFactor (ifThenElseFactor ef) [v3, pvar, v1, v2]
-  return v3
+  return (VarGraphValue v3)
 
 
 
@@ -305,13 +298,13 @@ defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b, c))) [
       b <- newVarType "either_right"
       return $ functionType a $ eitherType a b,
    \(AppTExpr _ (AppTExpr (AppTExpr (ConstTExpr "Either") leftType) rightType)) ->
-     return $ LambdaGraphValue $ \value -> EitherGraphValue <$> constValue boolExpFamValue (BoolValue False) <*> return value <*> defaultGraphValue rightType),
+     return $ LambdaGraphValue $ \value -> EitherGraphValue <$> constValue boolValueExpFam (BoolValue False) <*> return value <*> defaultGraphValue rightType),
   ("right",
    do a <- newVarType "either_left"
       b <- newVarType "either_right"
       return $ functionType b $ eitherType a b,
    \(AppTExpr _ (AppTExpr (AppTExpr (ConstTExpr "Either") leftType) rightType)) ->
-     return $ LambdaGraphValue $ \value -> EitherGraphValue <$> constValue boolExpFamValue (BoolValue True) <*> defaultGraphValue leftType <*> return value),
+     return $ LambdaGraphValue $ \value -> EitherGraphValue <$> constValue boolValueExpFam (BoolValue True) <*> defaultGraphValue leftType <*> return value),
   ("either",
    do a <- newVarType "either_left"
       b <- newVarType "either_right"
@@ -322,11 +315,11 @@ defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b, c))) [
          leftResult <- leftHandler leftVal
          rightResult <- rightHandler rightVal
          ifThenElse isRightVar leftResult rightResult),
-  ("uniformBool", return $ functionType (ConstTExpr "Bool") (ConstTExpr "Bool"), const $ return $ LambdaGraphValue $ \_ -> liftM VarGraphValue $ newVar boolExpFamValue),
-  ("true", return (ConstTExpr "Bool"), const $ liftM VarGraphValue $ constValue boolExpFamValue $ BoolValue True),
-  ("false", return (ConstTExpr "Bool"), const $ liftM VarGraphValue $ constValue boolExpFamValue $ BoolValue False),
+  ("uniformBool", return $ functionType (ConstTExpr "Bool") (ConstTExpr "Bool"), const $ return $ LambdaGraphValue $ \_ -> liftM VarGraphValue $ newVar boolValueExpFam),
+  ("true", return (ConstTExpr "Bool"), const $ liftM VarGraphValue $ constValue boolValueExpFam $ BoolValue True),
+  ("false", return (ConstTExpr "Bool"), const $ liftM VarGraphValue $ constValue boolValueExpFam $ BoolValue False),
   ("boolToDoubleFun", return (functionType (ConstTExpr "Bool") $ functionType (ConstTExpr "Bool") (ConstTExpr "Double")), const $ return $ LambdaGraphValue $ \_ -> do
-    rf <- newRandFun gaussianExpFamValue [boolExpFamValue]
+    rf <- newRandFun gaussianValueExpFam [boolValueExpFam]
     return $ LambdaGraphValue $ \(VarGraphValue boolvar) -> liftM VarGraphValue $ newSampleFromRandFun rf [boolvar])
   ]
 

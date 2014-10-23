@@ -7,7 +7,8 @@ module Quipp.Factor (
   FactorGraphTemplate(FactorGraphTemplate, factorGraphTemplateVars, factorGraphTemplateFactors),
   makeFactorGraphTemplate, instantiateTemplate,
   FactorGraphState, initFactorGraphState, varExpSufStat, newVarLikelihood,
-  FactorGraphParams, initTemplateParams, updateTemplateParams) where
+  FactorGraphParams, initTemplateParams, updateTemplateParams,
+  ifThenElseFactor) where
 
 import Control.Monad (liftM)
 import Debug.Trace
@@ -18,6 +19,7 @@ import Data.Maybe (fromJust)
 import Data.Random (RVar)
 import Numeric.AD (grad, auto)
 
+import Quipp.Value
 import Quipp.ExpFam
 import Quipp.Util
 
@@ -165,9 +167,9 @@ updateTemplateParams template origParams states = Map.mapWithKey updateParam ori
 
 -- logOddsToProbability x = exp (x - logSumExp [0, x])
 
-ifThenElseFactor :: ExpFam v -> Factor Value
+ifThenElseFactor :: ExpFam Value -> Factor Value
 ifThenElseFactor ef = Factor {
-    factorExpFams = [ef, categoricalExpFam 2, ef, ef],
+    factorExpFams = [ef, boolValueExpFam, ef, ef],
     -- factorLogValue = \[[n1a, n2a], [logodds], [n1b, n2b], [n1c, n2c]] ->
     factorNatParam = fnp
   }
@@ -175,8 +177,8 @@ ifThenElseFactor ef = Factor {
           let ex = [(1 - p) * a + p * b | (a, b) <- zip ea eb]
           in expFamSufStatToLikelihood ef ex
         fnp 1 [ex, _, ea, eb] =
-          let da = expFamKLDivergence (expFamSufStatToLikelihood ef ex) (expFamSufStatToLikelihood ef ea)
-              db = expFamKLDivergence (expFamSufStatToLikelihood ef ex) (expFamSufStatToLikelihood ef eb)
+          let da = expFamKLDivergence ef (expFamSufStatToLikelihood ef ex) (expFamSufStatToLikelihood ef ea)
+              db = expFamKLDivergence ef (expFamSufStatToLikelihood ef ex) (expFamSufStatToLikelihood ef eb)
           in NatParam [da - db]
         fnp 2 [ex, [p], _, eb] = case expFamSufStatToLikelihood ef ex of
            KnownValue kv -> KnownValue kv

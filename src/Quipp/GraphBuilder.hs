@@ -88,7 +88,7 @@ newFactor f args = newGeneralFactor (Left f) args
 getVarExpFam :: VarId -> GraphBuilder v (ExpFam v)
 getVarExpFam varid = do
   s <- get
-  var' <- resolveVar var
+  var' <- resolveVar varid
   return $ fromJust $ lookup var' $ gbsVars s
 
 newConstFactor :: Eq v => VarId -> v -> GraphBuilder v FactorId

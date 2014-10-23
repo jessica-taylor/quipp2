@@ -2,6 +2,7 @@
 
 module Quipp.ExpFam (ExpFam(ExpFam, expFamD, expFamSufStat, expFamG, expFamSample, expFamDefaultNatParam),
                      expFamFeaturesD, expFamSufStatToFeatures, expFamFeaturesToSufStat,
+                     expFamSufStatToLikelihood, expFamKLDivergence,
                      getNatParam,
                      Params,
                      promoteExpFam, expFamLogProbability, expFamMLE,
