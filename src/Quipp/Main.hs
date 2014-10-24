@@ -55,38 +55,35 @@ factorGraphTempl = makeFactorGraphTemplate (clusterVars ++ valueVars) gaussianRa
 
 -}
 
--- type FST = (FactorGraphState Value, FactorGraphParams)
--- 
--- initFst :: FST
--- initFst =
---   let params = initTemplateParams factorGraphTempl
---   in (initFactorGraphState (instantiateTemplate factorGraphTempl params), params)
--- 
--- iterateM :: Monad m => Int -> (a -> m a) -> a -> m [a]
--- iterateM 0 _ x = return [x]
--- iterateM n f x = liftM (x:) (f x >>= iterateM (n-1) f)
--- 
--- vmpStep :: FST -> Maybe FST
--- vmpStep (state, params) = do
---   let factorGraph = instantiateTemplate factorGraphTempl params
---   state' <- stepVmp factorGraph state
---   let params' = updateTemplateParams factorGraphTempl params [(1.0, state')]
---   return (state', params')
--- 
--- gibbsStep :: FST -> RVarT Maybe FST
--- gibbsStep (state, params) = do
---   let factorGraph = instantiateTemplate factorGraphTempl params
---   newStates <- iterateM 10 (stepGibbs factorGraph) state
---   let params' = updateTemplateParams factorGraphTempl params [(1.0, s) | s <- newStates]
---   return (last newStates, params')
--- 
--- stateList = iterate (fromJust . vmpStep) initFst
--- 
--- 
--- stateList2 = iterateM 10 gibbsStep initFst
+type FST = (FactorGraphState Value, FactorGraphParams)
 
--- getStateList2 :: RVarT Maybe [VmpState Value]
--- getStateList2 = iterateM 10 (stepGibbs  factorGraph) (initVmpState factorGraph)
+initFst :: FactorGraphTemplate Value -> FST
+initFst templ =
+  let params = initTemplateParams templ
+  in (initFactorGraphState (instantiateTemplate templ params), params)
+
+iterateM :: Monad m => Int -> (a -> m a) -> a -> m [a]
+iterateM 0 _ x = return [x]
+iterateM n f x = liftM (x:) (f x >>= iterateM (n-1) f)
+
+vmpStep :: FactorGraphTemplate Value -> FST -> Maybe FST
+vmpStep templ (state, params) = do
+  let factorGraph = instantiateTemplate templ params
+  state' <- stepVmp factorGraph state
+  let params' = updateTemplateParams templ params [(1.0, state')]
+  return (state', params')
+
+gibbsStep :: FactorGraphTemplate Value -> FST -> RVarT Maybe FST
+gibbsStep templ (state, params) = do
+  let factorGraph = instantiateTemplate templ params
+  newStates <- iterateM 30 (stepGibbs factorGraph) state
+  let params' = updateTemplateParams templ params [(1.0, s) | s <- newStates]
+  return (last newStates, params')
+
+stateList templ = iterate (fromJust . vmpStep templ) (initFst templ)
+
+
+stateList2 templ = iterateM 20 (gibbsStep templ) (initFst templ)
 
 main = do
   contents <- readFile "Quipp/test.quipp"
@@ -99,10 +96,12 @@ main = do
           Left err -> error err
           Right result -> result
       builder = interpretExpr (toInterpretContext defaultContext) typed
-      graph = fst $ runGraphBuilder builder
+      (template, result) = runGraphBuilder builder
   print resultExpr
   print typed
-  print (Map.keys (factorGraphTemplateVars graph))
+  print result
+  gibbsStates <- runRVarTWith (\(Just x) -> return x) (stateList2 template) StdRandom
+  mapM_ (putStrLn . ("\nSTATE " ++) . show) gibbsStates
   -- x <- runRVarTWith (\(Just x) -> return x) stateList2 StdRandom
   -- mapM_ print $ take 10 x
   -- -- x <- runRVarTWith (\(Just x) -> return x) getStateList2 StdRandom

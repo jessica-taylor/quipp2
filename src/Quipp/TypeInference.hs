@@ -192,6 +192,13 @@ typeInfer ctx expr = case runStateT (hindleyMilner ctx expr >>= reduceTypesInAnn
 
 data GraphValue = VarGraphValue VarId | LambdaGraphValue (GraphValue -> GraphBuilder Value GraphValue) | UnitGraphValue | PairGraphValue GraphValue GraphValue | EitherGraphValue VarId GraphValue GraphValue
 
+instance Show GraphValue where
+  show (VarGraphValue varid) = "$" ++ show varid
+  show (LambdaGraphValue _) = "#lambda"
+  show UnitGraphValue = "()"
+  show (PairGraphValue a b) = "(" ++ show a ++ ", " ++ show b ++ ")"
+  show (EitherGraphValue varid left right) = "if " ++ show varid ++ " then Left " ++ show left ++ " else Right " ++ show right
+
 defaultGraphValue :: TypeExpr -> GraphBuilder Value GraphValue
 defaultGraphValue (AppTExpr (AppTExpr (ConstTExpr "pair") firstType) secondType) =
   PairGraphValue <$> defaultGraphValue firstType <*> defaultGraphValue secondType
@@ -277,6 +284,7 @@ defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b, c))) [
    const $ return $ LambdaGraphValue $ \(VarGraphValue v1) ->
      return $ LambdaGraphValue $ \(VarGraphValue v2) ->
        liftM VarGraphValue $ conditionEqual v1 v2),
+  ("unit", return (ConstTExpr "Unit"), const $ return UnitGraphValue),
   ("fst",
    do a <- newVarType "pair_fst"
       b <- newVarType "pair_snd"
@@ -315,10 +323,10 @@ defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b, c))) [
          leftResult <- leftHandler leftVal
          rightResult <- rightHandler rightVal
          ifThenElse isRightVar leftResult rightResult),
-  ("uniformBool", return $ functionType (ConstTExpr "Bool") (ConstTExpr "Bool"), const $ return $ LambdaGraphValue $ \_ -> liftM VarGraphValue $ newVar boolValueExpFam),
+  ("uniformBool", return $ functionType (ConstTExpr "Unit") (ConstTExpr "Bool"), const $ return $ LambdaGraphValue $ \_ -> liftM VarGraphValue $ newVar boolValueExpFam),
   ("true", return (ConstTExpr "Bool"), const $ liftM VarGraphValue $ constValue boolValueExpFam $ BoolValue True),
   ("false", return (ConstTExpr "Bool"), const $ liftM VarGraphValue $ constValue boolValueExpFam $ BoolValue False),
-  ("boolToDoubleFun", return (functionType (ConstTExpr "Bool") $ functionType (ConstTExpr "Bool") (ConstTExpr "Double")), const $ return $ LambdaGraphValue $ \_ -> do
+  ("boolToDoubleFun", return (functionType (ConstTExpr "Unit") $ functionType (ConstTExpr "Bool") (ConstTExpr "Double")), const $ return $ LambdaGraphValue $ \_ -> do
     rf <- newRandFun gaussianValueExpFam [boolValueExpFam]
     return $ LambdaGraphValue $ \(VarGraphValue boolvar) -> liftM VarGraphValue $ newSampleFromRandFun rf [boolvar])
   ]
