@@ -8,7 +8,7 @@ import qualified Data.Map as Map
 import Control.Applicative ((<$>), (<*>))
 import Control.Monad (liftM, zipWithM, forM)
 import Control.Monad.State (get, put)
-import Control.Monad.State.Lazy (StateT, runStateT)
+import Control.Monad.State.Lazy (State, runState, StateT, runStateT)
 import Control.Monad.Trans (lift)
 
 import Quipp.ExpFam
@@ -23,12 +23,12 @@ data AdtDefinition = AdtDefinition String [String] [(String, [TypeExpr])] derivi
 data PatternExpr = VarPExpr String | ConstrPExpr String [PatternExpr] deriving (Eq, Ord, Show)
 
 -- Expressions annotated by type.
-data AnnotatedExprBody = VarAExpr String | LambdaAExpr String TypeExpr AnnotatedExpr | AppAExpr AnnotatedExpr AnnotatedExpr | LetAExpr String AnnotatedExpr AnnotatedExpr | LiteralAExpr Value | AdtAExpr AdtDefinition AnnotatedExpr | CaseAExpr AnnotatedExpr [(PatternExpr, AnnotatedExpr)] deriving (Eq, Ord, Show)
+data AnnotatedExprBody = VarAExpr String | LambdaAExpr String TypeExpr AnnotatedExpr | AppAExpr AnnotatedExpr AnnotatedExpr | DefAExpr String AnnotatedExpr AnnotatedExpr | LiteralAExpr Value | AdtAExpr AdtDefinition AnnotatedExpr | CaseAExpr AnnotatedExpr [(PatternExpr, AnnotatedExpr)] deriving (Eq, Ord, Show)
 
 type AnnotatedExpr = (TypeExpr, AnnotatedExprBody)
 
 -- Un-annotated expressions.
-data Expr = VarExpr String | LambdaExpr String Expr | AppExpr Expr Expr | LetExpr String Expr Expr | LiteralExpr Value | AdtExpr AdtDefinition Expr | CaseExpr Expr [(PatternExpr, Expr)] deriving (Eq, Ord, Show)
+data Expr = VarExpr String | LambdaExpr String Expr | AppExpr Expr Expr | DefExpr String Expr Expr | LiteralExpr Value | AdtExpr AdtDefinition Expr | CaseExpr Expr [(PatternExpr, Expr)] deriving (Eq, Ord, Show)
 
 type TypeId = Int
 
@@ -70,7 +70,7 @@ reduceTypesInAnnotatedExpr (t, abody) = do
     LambdaAExpr param typ body ->
       LambdaAExpr param <$> reduceTypeDeep typ <*> reduceTypesInAnnotatedExpr body
     AppAExpr fun arg -> AppAExpr <$> reduceTypesInAnnotatedExpr fun <*> reduceTypesInAnnotatedExpr arg
-    LetAExpr var value body -> LetAExpr var <$> reduceTypesInAnnotatedExpr value <*> reduceTypesInAnnotatedExpr body
+    DefAExpr var value body -> DefAExpr var <$> reduceTypesInAnnotatedExpr value <*> reduceTypesInAnnotatedExpr body
     AdtAExpr defn body -> AdtAExpr defn <$> reduceTypesInAnnotatedExpr body
     CaseAExpr value cases -> CaseAExpr <$> reduceTypesInAnnotatedExpr value <*> mapM (\(pat, body) -> (pat,) <$> reduceTypesInAnnotatedExpr body) cases
     other -> return other
@@ -91,7 +91,7 @@ unifyReduced (AppTExpr a b) (AppTExpr c d) = do
   unify a c
   unify b d
 
-unifyReduced _ _ = lift (Left "Unification failed")
+unifyReduced a b = lift (Left $ "Unification failed: " ++ show a ++ ", " ++ show b)
 
 unify :: TypeExpr -> TypeExpr -> TypeCheck ()
 
@@ -171,10 +171,10 @@ hindleyMilner ctx (AppExpr fun arg) = do
   unify funType (functionType argType resultType)
   return (resultType, AppAExpr funAExpr argAExpr)
 
-hindleyMilner ctx@(varctx, typectx) (LetExpr var value body) = do
+hindleyMilner ctx@(varctx, typectx) (DefExpr var value body) = do
   valueAExpr@(valueType, _) <- hindleyMilner ctx value
   bodyAExpr@(bodyType, _) <- hindleyMilner (Map.insert var (cloneWithNewVars valueType) varctx, typectx) body
-  return (bodyType, LetAExpr var valueAExpr bodyAExpr)
+  return (bodyType, DefAExpr var valueAExpr bodyAExpr)
 
 hindleyMilner ctx (LiteralExpr lit) =
   let t = case lit of
@@ -232,7 +232,7 @@ interpretExpr m (_, AppAExpr fun arg) = do
     LambdaGraphValue f -> interpretExpr m arg >>= f
     _ -> error "Function in application expression is not actually a function"
 
-interpretExpr m (_, LetAExpr var value body) = do
+interpretExpr m (_, DefAExpr var value body) = do
   val <- interpretExpr m value
   interpretExpr (Map.insert var (const $ return val) m) body
 
@@ -273,6 +273,44 @@ ifThenElse pvar (VarGraphValue v1) (VarGraphValue v2) = do
   return (VarGraphValue v3)
 
 
+typeToExpFams :: TypeExpr -> [ExpFam Value]
+typeToExpFams (ConstTExpr "Unit") = []
+typeToExpFams t@(ConstTExpr _) = [expFamForType t]
+typeToExpFams (AppTExpr (AppTExpr (ConstTExpr "Pair") a) b) =
+  typeToExpFams a ++ typeToExpFams b
+typeToExpFams (AppTExpr (AppTExpr (ConstTExpr "Either") a) b) =
+  [boolValueExpFam] ++ typeToExpFams a ++ typeToExpFams b
+typeToExpFams other = error ("Cannot get exponential family for type: " ++ show other)
+
+graphValueEmbeddedVars :: GraphValue -> [VarId]
+graphValueEmbeddedVars UnitGraphValue = []
+graphValueEmbeddedVars (VarGraphValue v) = [v]
+graphValueEmbeddedVars (PairGraphValue a b) =
+  graphValueEmbeddedVars a ++ graphValueEmbeddedVars b
+graphValueEmbeddedVars (EitherGraphValue c a b) =
+  [c] ++ graphValueEmbeddedVars a ++ graphValueEmbeddedVars b
+graphValueEmbeddedVars (LambdaGraphValue _) =
+  error "Cannot get embedded variables in LambdaGraphValue"
+
+varsToGraphValue' :: TypeExpr -> State [VarId] GraphValue
+varsToGraphValue' (ConstTExpr "Unit") = return UnitGraphValue
+varsToGraphValue' (ConstTExpr x) | elem x ["Bool", "Double"] = do
+  (v:vs) <- get
+  put vs
+  return $ VarGraphValue v
+varsToGraphValue' (AppTExpr (AppTExpr (ConstTExpr "Pair") a) b) =
+  PairGraphValue <$> varsToGraphValue' a <*> varsToGraphValue' b
+varsToGraphValue' (AppTExpr (AppTExpr (ConstTExpr "Either") a) b) = do
+  (v:vs) <- get
+  put vs
+  EitherGraphValue v <$> varsToGraphValue' a <*> varsToGraphValue' b
+varsToGraphValue' other =
+  error ("Cannot get graph value for type: " ++ show other)
+
+varsToGraphValue :: TypeExpr -> [VarId] -> GraphValue
+varsToGraphValue t vars = case runState (varsToGraphValue' t) vars of
+  (result, []) -> result
+  other -> error $ "Too many variables (" ++ show (length vars) ++ ") for type " ++ show t
 
 defaultContext :: Map String (TypeCheck TypeExpr, TypeExpr -> GraphBuilder Value GraphValue)
 defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b, c))) [
@@ -326,6 +364,16 @@ defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b, c))) [
   ("uniformBool", return $ functionType (ConstTExpr "Unit") (ConstTExpr "Bool"), const $ return $ LambdaGraphValue $ \_ -> liftM VarGraphValue $ newVar boolValueExpFam),
   ("true", return (ConstTExpr "Bool"), const $ liftM VarGraphValue $ constValue boolValueExpFam $ BoolValue True),
   ("false", return (ConstTExpr "Bool"), const $ liftM VarGraphValue $ constValue boolValueExpFam $ BoolValue False),
+  ("randFunction", return (functionType (ConstTExpr "Unit") $ functionType (VarTExpr "a") $ VarTExpr "b"),
+   \(AppTExpr (AppTExpr (ConstTExpr "->") (ConstTExpr "Unit")) (AppTExpr (AppTExpr (ConstTExpr "->") argType) resType)) ->
+     return $ LambdaGraphValue $ \UnitGraphValue -> do
+       let argExpFams = typeToExpFams argType
+           resExpFams = typeToExpFams resType
+       rfs <- mapM (flip newRandFun argExpFams) resExpFams
+       return $ LambdaGraphValue $ \argValue -> do
+         let argVars = graphValueEmbeddedVars argValue
+         resVars <- mapM (flip newSampleFromRandFun argVars) rfs
+         return $ varsToGraphValue resType resVars),
   ("boolToDoubleFun", return (functionType (ConstTExpr "Unit") $ functionType (ConstTExpr "Bool") (ConstTExpr "Double")), const $ return $ LambdaGraphValue $ \_ -> do
     rf <- newRandFun gaussianValueExpFam [boolValueExpFam]
     return $ LambdaGraphValue $ \(VarGraphValue boolvar) -> liftM VarGraphValue $ newSampleFromRandFun rf [boolvar])

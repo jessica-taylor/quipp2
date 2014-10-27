@@ -76,6 +76,33 @@ expFamFactor ef argExpFams eta@(etaBase, etaWeights) =
               relevantWeights = map (take thisArgDim . drop minFeatureIndex) etaWeights
           in expFamFeaturesToSufStat (argExpFams !! (n-1)) $ matMulByVector (transpose relevantWeights) gradProbNp
 
+-- expFamWithParamsFactor :: ExpFam Value -> [ExpFam Value] -> Factor Value
+-- expFamWithParamsFactor ef argExpFams =
+--   Factor {
+--     factorExpFams = ef : (argExpFams ++ replicate (expFamD ef + expFamFeaturesD ef * sum (map expFamFeaturesD argExpFams)) gaussianValueExpFam,
+--     factorLogValue = flv,
+--     factorNatParam = NatParam .: fnp
+--   }
+--   where argSsToFeatures = concat . zipWith expFamSufStatToFeatures argExpFams
+--         splitSufStats (ss:rest) =
+--           let (argSs, rest') = splitAt (length argExpFams) rest
+--               (etaBaseSs, etaWeightsSs) = splitAt (expFamD ef) rest'
+--           in (ss, argSs, etaBaseSs, etaWeightsSs)
+--         flv sss =
+--           let (ss, argSs, etaBaseSs, etaWeightsSs) = splitSufStats sss
+--               expEta = (map head etaBaseSs, splitListIntoBlocks (expFamFeaturesD ef) (map head etaWeightsSs))
+--           in expFamLogProbability ef expEta (argSsToFeatures argSs) ss
+--         fnp i sss =
+--           let (ss, argSs, etaBaseSs, etaWeightsSs) = splitSufStats sss
+--               expEta = (map head etaBaseSs, splitListIntoBlocks (expFamFeaturesD ef) (map head etaWeightsSs))
+--           in if i == 0
+--              then getNatParam ef eta $ argSsToFeatures argSs
+--              else let i' = i - 1 in
+--              if i' < length argExpFams
+--              then grad (\afs -> getNatParam ef expEta afs) argSs
+--               
+--         fnp n 
+
 type VarId = Int
 type FactorId = Int
 

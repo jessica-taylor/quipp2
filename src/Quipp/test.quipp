@@ -1,4 +1,4 @@
-let fun = boolToDoubleFun unit;
+let fun = randFunction unit;
 let b1 = uniformBool unit;
 let b2 = uniformBool unit;
 let b3 = uniformBool unit;

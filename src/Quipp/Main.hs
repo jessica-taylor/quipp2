@@ -73,22 +73,27 @@ vmpStep templ (state, params) = do
   let params' = updateTemplateParams templ params [(1.0, state')]
   return (state', params')
 
+takeEvery :: Int -> [a] -> [a]
+takeEvery _ [] = []
+takeEvery n (x:xs) = x : takeEvery n (drop (n-1) xs)
+
+
 gibbsStep :: FactorGraphTemplate Value -> FST -> RVarT Maybe FST
 gibbsStep templ (state, params) = do
   let factorGraph = instantiateTemplate templ params
-  newStates <- iterateM 30 (stepGibbs factorGraph) state
-  let params' = updateTemplateParams templ params [(1.0, s) | s <- newStates]
+  newStates <- iterateM 1 (stepGibbs factorGraph) state
+  let params' = updateTemplateParams templ params [(1.0, s) | s <- takeEvery 10 (tail newStates)]
   return (last newStates, params')
 
 stateList templ = iterate (fromJust . vmpStep templ) (initFst templ)
 
 
-stateList2 templ = iterateM 20 (gibbsStep templ) (initFst templ)
+stateList2 templ = iterateM 100 (gibbsStep templ) (initFst templ)
 
 main = do
   contents <- readFile "Quipp/test.quipp"
   let resultExpr =
-        case parse toplevel "test.quipp" contents of
+        case parse toplevel "FILE" contents of
           Left err -> error $ show err
           Right result -> result
       typed =

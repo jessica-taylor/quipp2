@@ -11,7 +11,7 @@ import Text.Parsec.Prim
 import Quipp.TypeInference
 import Quipp.Value
 
-keywords = ["data", "let", "in", "case", "of"]
+keywords = ["data", "let", "in", "case", "of", "def"]
 
 wordChar = satisfy (\x -> isAlphaNum x || x == '_')
 
@@ -93,7 +93,18 @@ letExpr = do
   value <- expr
   spacedString ";"
   body <- expr
-  return $ LetExpr var value body
+  return $ AppExpr (LambdaExpr var body) value
+
+defExpr = do
+  stringWithBreak "def"
+  var <- lowerId
+  -- TODO define functions?
+  spacedString "="
+  value <- expr
+  spacedString ";"
+  body <- expr
+  return $ DefExpr var value body
+  
 
 varPatternExpr = VarPExpr <$> lowerId
 

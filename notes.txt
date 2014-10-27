@@ -24,3 +24,70 @@ what if a case is applied to AdtDistr?
 
 but what if the returned values themselves are adts?
 then hook up factors of case return values to the result
+
+-----------
+
+parameter inference:
+
+What if we stop finding MLE estimates and instead just assume the parameters come from some prior?
+
+This requires changing our exponential family factors.  This is because currently, the factor passes messages to the arguments (and equivalently parameters) that only care about feature values.  So, for Gaussian we have an exponential likelihood function.  But really, we want a Gaussian likelihood function: extreme values of the argument should reduce the probability of the true data.
+
+Luckily, since we're using Newton's method, we're already computing the Hessian of the likelihood with respect to the parameters.  This quadratic approximation should probably be fine most of the time.
+
+So basically: compute a quadratic approximation of the likelihood with respect to the parameters.  I think we can ignore correlations between different parameters and just find the mean/variance of each parameter.  Then send quadratic messages to them.  So, each parameter should be an independent Gaussian.
+
+This has a nice advantage: since there is no separate optimization step, it is possible to use a system like BUGS to do efficient inference.  It handles parameter uncertainty much better than ordinary MLE.  For example, if we observe 2 values from a Gaussian, the result will be a t distribution rather than a Gaussian distribution.
+
+Note: should look up variational message passing factors and whether what we're doing here is an actual legal factor.
+
+
+okay so...
+
+lp(y | eta, weights, x) = n * ss(y) - g(n) where n = eta + extend(weights * feat(y))
+
+We want to pass lp(y | eta, weights, x) as a function of x, eta, or weights as a message.
+
+One idea: get it as a gaussian and pass it in.
+
+that is: we compute lp(y | eta, weights, x) as a quadratic function using the gradient and Hessian.
+
+But can we generalize this?  Perhaps x comes from a non-Gaussian distribution, so we would like the message to x to be non-Gaussian.
+
+In general, can we get an approximation to f(x) of the form m * phi(x) + b?
+
+m_i = (f . phi_i^-1)'(phi_i(x)) = f'(x) * phi_i^-1'(phi_i(x))
+example: phi_i(x) = x^2
+m_i = f'(x)/(2*x)
+b = f(x) - m * phi(x)
+
+
+idea: only care about linear factors for arguments, but care about quadratic ones for parameters.
+
+Think about what this means for estimating a Gaussian.
+
+We have 2 parameters: n1 and n2.  We have a Gaussian distribution over each.
+
+So what do we do if we have n samples and want to estimate paramemters?  Each parameter is involved in n factors.
+
+
+Factor i will be:
+
+n * [x_i, x_i^2] - g(n) where n = [n1, n2]
+where g [n1, n2] = -n1^2/(4*n2)- 1/2 * log (-2 * n2)
+
+n1 * x + n2 * x^2 + n1^2/(4*n2) + 1/2 * log(-2 * n2)
+
+gradient = [x + n1/(2*n2), x^2  - n1^2/(4*n2^2) - 1/(4 * n2)]
+
+diag hessian = [1/(2*n2), 1/(4 * n2^2)]
+
+
+
+
+note about accuracy:
+
+for VMP and pure Gibbs, need accurate messages.  If messages are inaccurate, we can use MH and use the approximate Gibbs samples as proposals.  So we accept that factorNatParam is approximate and that we need to use factorLogValue to actually accept or reject.
+
+
+
