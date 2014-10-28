@@ -9,6 +9,7 @@ import Data.Map (Map, (!))
 import qualified Data.Map as Map
 import Data.Maybe (fromJust)
 import Data.Random (RVarT, RVar, normalT)
+import Data.Random.Distribution.Exponential (exponentialT)
 
 import Quipp.ExpFam
 import Quipp.Factor
@@ -33,4 +34,25 @@ updateVarGibbs graph state varid = do
 stepGibbs :: Eq v => FactorGraph v -> FactorGraphState v -> RVarT Maybe (FactorGraphState v)
 stepGibbs graph state =
   foldlM (\st varid -> updateVarGibbs graph st varid) state (Map.keys $ factorGraphVars graph)
-  
+
+updateVarMH :: Eq v => FactorGraph v -> FactorGraphState v -> VarId -> RVarT Maybe (FactorGraphState v)
+updateVarMH graph state varid = do
+  let (ef, factorids) = factorGraphVars graph ! varid
+  likelihood <- lift (newVarLikelihood graph state varid)
+  proposal <- sampleRVar $ sampleLikelihood ef $ likelihood
+  let proposalState = Map.insert varid (KnownValue proposal) state
+  case state ! varid of
+    NatParam _ -> return proposalState
+    KnownValue oldValue -> do
+      proposalStateLikelihood <- lift (newVarLikelihood graph proposalState varid)
+      let stateLp s = sum (map (factorExpLogValue graph s) factorids)
+          mhLog = stateLp proposalState - likelihoodLogProbability ef likelihood proposal
+                  - stateLp state + likelihoodLogProbability ef proposalStateLikelihood oldValue
+      if mhLog >= 0 then return proposalState
+      else do
+        logUnitInterval <- exponentialT 1.0
+        return $ if mhLog >= logUnitInterval then proposalState else state
+
+stepMH :: Eq v => FactorGraph v -> FactorGraphState v -> RVarT Maybe (FactorGraphState v)
+stepMH graph state =
+  foldlM (\st varid -> updateVarMH graph st varid) state (Map.keys $ factorGraphVars graph)

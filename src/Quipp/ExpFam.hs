@@ -7,6 +7,7 @@ module Quipp.ExpFam (ExpFam(ExpFam, expFamD, expFamSufStat, expFamG, expFamSampl
                      Params,
                      promoteExpFam, expFamLogProbability, expFamMLE,
                      Likelihood(KnownValue, NatParam), promoteLikelihood, negInfinity,
+                     likelihoodLogProbability,
                      timesLikelihood, productLikelihoods,
                      sampleLikelihood, expSufStat, covarianceSufStat,
                      gaussianExpFam, categoricalExpFam) where
@@ -77,8 +78,6 @@ newtonMethodStep f x =
 newtonMethod :: ([Double] -> (Double, [Double], Matrix Double)) -> [Double] -> [[Double]]
 newtonMethod f = iterate (newtonMethodStep f)
 
-traced label x = trace (label ++ " " ++ show x) x
-
 ratNum = (fromRational :: Rational -> Double) . toRational
 
 type Params m = ([m], Matrix m)
@@ -134,9 +133,14 @@ sampleLikelihood :: ExpFam v -> Likelihood v -> RVar v
 sampleLikelihood _ (KnownValue v) = return v
 sampleLikelihood ef (NatParam np) = expFamSample ef np
 
+likelihoodLogProbability :: Eq v => ExpFam v -> Likelihood v -> v -> Double
+likelihoodLogProbability ef (KnownValue a) b | a == b = 0.0
+                                             | otherwise = negInfinity
+likelihoodLogProbability ef (NatParam np) a = dotProduct np (expFamSufStat ef a) - expFamG ef np
+
 expSufStat :: ExpFam v -> Likelihood v -> [Double]
 expSufStat ef (KnownValue v) = expFamSufStat ef v
-expSufStat ef (NatParam np) = 
+expSufStat ef (NatParam np) =
   let g = grad (expFamG ef) np
   in if any isNaN g then error ("Bad g gradient: " ++ show np ++ ", " ++ show g)
   else g
@@ -147,12 +151,16 @@ covarianceSufStat ef (KnownValue v) = outerProduct ss ss
 covarianceSufStat ef (NatParam np) =
   hessian (expFamG ef) np
 
+expFamEntropy :: Eq v => ExpFam v -> Likelihood v -> Double
+-- TODO: reasonable?
+expFamEntropy ef (KnownValue v) = 0
+expFamEntropy ef (NatParam p) = dotProduct p (expSufStat ef (NatParam p)) - expFamG ef p
+
 expFamKLDivergence :: Eq v => ExpFam v -> Likelihood v -> Likelihood v -> Double
-expFamKLDivergence ef (KnownValue a) (KnownValue b) | a == b = 0.0
-                                                    | otherwise = infinity
-expFamKLDivergence ef (KnownValue a) (NatParam np) = expFamG ef np - dotProduct np (expFamSufStat ef a)
+expFamKLDivergence ef (KnownValue a) l = - likelihoodLogProbability ef l a
 expFamKLDivergence ef (NatParam p) (NatParam q) =
   expFamG ef q - expFamG ef p - dotProduct (zipWith (-) q p) (expSufStat ef (NatParam p))
+expFamKLDivergence ef (NatParam p) (KnownValue v) = infinity
 
 mkExpFam :: [v -> Double] -> (forall s. (RealFloat s, Mode s, Scalar s ~ Double) => [s] -> s) -> ([Double] -> Likelihood v) -> ([Double] -> RVar v) -> [Double] -> [Bool] -> ExpFam v
 mkExpFam fs g like sample np mask = ExpFam {
@@ -191,7 +199,7 @@ categoricalExpFam n = mkExpFam (map ss [1 .. n-1]) g like sample (replicate (n-1
             | otherwise = error ("bad categorical natural parameter: " ++ show (map realToDouble x))
         like probs = undefined --halp
         sample :: [Double] -> RVar Int
-        sample ns = categorical $ zip (logProbsToProbs (0:ns)) [0..]
+        sample ns = trace ("sample " ++ show (logProbsToProbs (0:ns))) $ categorical $ zip (logProbsToProbs (0:ns)) [0..]
 
 -- function log_gamma(xx)
 -- {

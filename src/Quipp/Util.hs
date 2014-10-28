@@ -8,6 +8,9 @@ import Numeric.LinearAlgebra.Algorithms (linearSolve, pinv)
 infixr 9 .:
 (f .: g) x y = f (g x y)
 
+traced label x = trace (label ++ " " ++ show x) x
+
+
 sampleRVar v = runRVar v StdRandom
 
 infinity :: Double
@@ -16,13 +19,12 @@ infinity = read "Infinity"
 negInfinity :: Double
 negInfinity = read "-Infinity"
 
--- NOTE: this version doesn't work with ad :(
--- logSumExp :: RealFloat a => [a] -> a
--- logSumExp lps = mx + log $ sum (map (\x -> exp (x - mx)) lps)
---   where mx = maximum lps
-
 logSumExp :: RealFloat a => [a] -> a
-logSumExp lps = log $ sum $ map exp lps
+logSumExp lps = mx + log (sum [exp (lp - mx) | lp <- lps])
+  where mx = maximum lps
+
+-- logSumExp :: RealFloat a => [a] -> a
+-- logSumExp lps = log $ sum $ map exp lps
 
 logProbsToProbs :: [Double] -> [Double]
 logProbsToProbs lps = [exp (lp - lse) | lp <- lps]

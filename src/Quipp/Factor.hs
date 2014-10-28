@@ -7,6 +7,7 @@ module Quipp.Factor (
   FactorGraphTemplate(FactorGraphTemplate, factorGraphTemplateVars, factorGraphTemplateFactors),
   makeFactorGraphTemplate, instantiateTemplate,
   FactorGraphState, initFactorGraphState, varExpSufStat, newVarLikelihood,
+  factorExpLogValue,
   FactorGraphParams, initTemplateParams, updateTemplateParams,
   ifThenElseFactor) where
 
@@ -59,6 +60,7 @@ constFactor ss x = Factor {
 
 transpose xs = if maximum (map length xs) == 0 then [] else map head xs : transpose (map tail xs)
 
+-- TODO: something is fishy here.  Things get flipped when they shouldn't.
 expFamFactor :: ExpFam v -> [ExpFam v] -> Params Double -> Factor v
 expFamFactor ef argExpFams eta@(etaBase, etaWeights) =
   Factor {
@@ -74,7 +76,7 @@ expFamFactor ef argExpFams eta@(etaBase, etaWeights) =
               minFeatureIndex = sum $ map expFamFeaturesD $ take (n-1) argExpFams
               thisArgDim = expFamFeaturesD (argExpFams !! (n-1))
               relevantWeights = map (take thisArgDim . drop minFeatureIndex) etaWeights
-          in expFamFeaturesToSufStat (argExpFams !! (n-1)) $ matMulByVector (transpose relevantWeights) gradProbNp
+          in traced ("np " ++ show gradProbNp ++ " | " ++ show relevantWeights) $ expFamFeaturesToSufStat (argExpFams !! (n-1)) $ matMulByVector (transpose relevantWeights) gradProbNp
 
 -- expFamWithParamsFactor :: ExpFam Value -> [ExpFam Value] -> Factor Value
 -- expFamWithParamsFactor ef argExpFams =
@@ -167,19 +169,22 @@ varCovarianceFeatures graph state varid =
   let ef = fst (factorGraphVars graph ! varid)
   in expFamSufStatToFeatures ef $ map (expFamSufStatToFeatures ef) $ varCovarianceSufStat graph state varid
 
+factorExpLogValue :: FactorGraph v -> FactorGraphState v -> FactorId -> Double
+factorExpLogValue graph state factorid =
+  let (factor, varids) = factorGraphFactors graph ! factorid
+  in factorLogValue factor $ map (varExpSufStat graph state) varids
+
 newVarLikelihood :: Eq v => FactorGraph v -> FactorGraphState v -> VarId -> Maybe (Likelihood v)
 newVarLikelihood graph state varid =
   let (_, fids) = factorGraphVars graph ! varid
       fnp (factor, varids) =
-        factorNatParam factor (fromJust $ elemIndex varid varids) $ map (varExpFeatures graph state) varids
+        factorNatParam factor (fromJust $ elemIndex varid varids) $ map (varExpSufStat graph state) varids
   in productLikelihoods $ map (fnp . (factorGraphFactors graph !)) fids
 
 initTemplateParams :: FactorGraphTemplate v -> FactorGraphParams
 initTemplateParams = fmap getParam . factorGraphTemplateRandFunctions
   where getParam (ef, featureEfs, _) =
           (expFamDefaultNatParam ef, replicate (expFamFeaturesD ef) $ replicate (sum $ map expFamFeaturesD featureEfs) 0.0001)
-
-traced s x = trace ("\n" ++ s ++ show x) x
 
 updateTemplateParams :: FactorGraphTemplate v -> FactorGraphParams -> [(Double, FactorGraphState v)] -> FactorGraphParams
 updateTemplateParams template origParams states = Map.mapWithKey updateParam origParams

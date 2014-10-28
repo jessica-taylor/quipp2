@@ -81,8 +81,8 @@ takeEvery n (x:xs) = x : takeEvery n (drop (n-1) xs)
 gibbsStep :: FactorGraphTemplate Value -> FST -> RVarT Maybe FST
 gibbsStep templ (state, params) = do
   let factorGraph = instantiateTemplate templ params
-  newStates <- iterateM 1 (stepGibbs factorGraph) state
-  let params' = updateTemplateParams templ params [(1.0, s) | s <- takeEvery 10 (tail newStates)]
+  newStates <- iterateM 100 (stepMH factorGraph) state
+  let params' = traced "\nparams: " $ updateTemplateParams templ params [(1.0, s) | s <- takeEvery 10 (tail newStates)]
   return (last newStates, params')
 
 stateList templ = iterate (fromJust . vmpStep templ) (initFst templ)
