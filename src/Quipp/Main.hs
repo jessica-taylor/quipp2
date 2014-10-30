@@ -88,10 +88,10 @@ gibbsStep templ (state, params) = do
 stateList templ = iterate (fromJust . vmpStep templ) (initFst templ)
 
 
-stateList2 templ = iterateM 5 (gibbsStep templ) (initFst templ)
+stateList2 templ = iterateM 20 (gibbsStep templ) (initFst templ)
 
 main = do
-  contents <- readFile "Quipp/test.quipp"
+  contents <- readFile "examples/2d_clustering.quipp"
   let resultExpr =
         case parse toplevel "FILE" contents of
           Left err -> error $ show err

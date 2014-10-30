@@ -272,6 +272,15 @@ ifThenElse pvar (VarGraphValue v1) (VarGraphValue v2) = do
   newFactor (ifThenElseFactor ef) [v3, pvar, v1, v2]
   return (VarGraphValue v3)
 
+unifyGraphValues :: GraphValue -> GraphValue -> GraphBuilder Value GraphValue
+unifyGraphValues (VarGraphValue a) (VarGraphValue b) = liftM VarGraphValue $ conditionEqual a b
+unifyGraphValues (PairGraphValue a b) (PairGraphValue c d) =
+  PairGraphValue <$> unifyGraphValues a c <*> unifyGraphValues b d
+unifyGraphValues (EitherGraphValue a b c) (EitherGraphValue d e f) =
+  EitherGraphValue <$> conditionEqual a d <*> unifyGraphValues b e <*> unifyGraphValues c f
+unifyGraphValues UnitGraphValue UnitGraphValue = return UnitGraphValue
+unifyGraphValues _ _ = error ("Cannot unify functions")
+
 
 typeToExpFams :: TypeExpr -> [ExpFam Value]
 typeToExpFams (ConstTExpr "Unit") = []
@@ -319,9 +328,8 @@ defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b, c))) [
   ("unify",
    do a <- newVarType "unify_type"
       return $ functionType a $ functionType a a,
-   const $ return $ LambdaGraphValue $ \(VarGraphValue v1) ->
-     return $ LambdaGraphValue $ \(VarGraphValue v2) ->
-       liftM VarGraphValue $ conditionEqual v1 v2),
+   const $ return $ LambdaGraphValue $ \v1 ->
+     return $ LambdaGraphValue $ \v2 -> unifyGraphValues v1 v2),
   ("unit", return (ConstTExpr "Unit"), const $ return UnitGraphValue),
   ("fst",
    do a <- newVarType "pair_fst"

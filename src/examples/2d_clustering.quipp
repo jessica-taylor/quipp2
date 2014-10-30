@@ -1,0 +1,14 @@
+let fun = randFunction unit;
+let b1 = uniformBool unit;
+let b2 = uniformBool unit;
+let b3 = uniformBool unit;
+let b4 = uniformBool unit;
+let b5 = uniformBool unit;
+let b6 = uniformBool unit;
+let x1 = unify (pair 0.1 6.2) (fun b1);
+let x2 = unify (pair 0.2 6.3) (fun b2);
+let x3 = unify (pair 0.3 6.4) (fun b3);
+let x4 = unify (pair 3.1 6.5) (fun b4);
+let x5 = unify (pair 3.2 6.6) (fun b5);
+let x6 = unify (pair 3.3 6.7) (fun b6);
+pair b1 (pair b2 (pair b3 (pair b4 (pair b5 b6))))
