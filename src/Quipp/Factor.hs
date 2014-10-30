@@ -79,7 +79,7 @@ expFamFactor ef argExpFams eta@(etaBase, etaWeights) =
               minFeatureIndex = sum $ map expFamFeaturesD $ take (n-1) argExpFams
               thisArgDim = expFamFeaturesD (argExpFams !! (n-1))
               relevantWeights = map (take thisArgDim . drop minFeatureIndex) etaWeights
-          in traced ("np " ++ show gradProbNp ++ " | " ++ show relevantWeights) $ expFamFeaturesToSufStat (argExpFams !! (n-1)) $ matMulByVector (transpose relevantWeights) gradProbNp
+          in expFamFeaturesToSufStat (argExpFams !! (n-1)) $ matMulByVector (transpose relevantWeights) gradProbNp
 
 -- expFamWithParamsFactor :: ExpFam Value -> [ExpFam Value] -> Factor Value
 -- expFamWithParamsFactor ef argExpFams =

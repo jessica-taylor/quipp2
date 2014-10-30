@@ -203,7 +203,7 @@ categoricalExpFam n = mkExpFam (map ss [1 .. n-1]) g like sample (replicate (n-1
             | otherwise = error ("bad categorical natural parameter: " ++ show (map realToDouble x))
         like probs = undefined --halp
         sample :: [Double] -> RVar Int
-        sample ns = trace ("sample " ++ show (logProbsToProbs (0:ns))) $ categorical $ zip (logProbsToProbs (0:ns)) [0..]
+        sample ns = categorical $ zip (logProbsToProbs (0:ns)) [0..]
 
 -- function log_gamma(xx)
 -- {

@@ -88,7 +88,7 @@ gibbsStep templ (state, params) = do
 stateList templ = iterate (fromJust . vmpStep templ) (initFst templ)
 
 
-stateList2 templ = iterateM 100 (gibbsStep templ) (initFst templ)
+stateList2 templ = iterateM 5 (gibbsStep templ) (initFst templ)
 
 main = do
   contents <- readFile "Quipp/test.quipp"
