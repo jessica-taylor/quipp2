@@ -11,6 +11,7 @@ module Quipp.Factor (
   FactorGraphParams, initTemplateParams, updateTemplateParams,
   ifThenElseFactor) where
 
+import Control.Arrow ((>>>))
 import Control.Monad (liftM)
 import Debug.Trace
 import Data.List (elemIndex)
@@ -26,23 +27,25 @@ import Quipp.Util
 
 data Factor v = Factor {
   factorExpFams :: [ExpFam v],
-  factorLogValue :: [[Double]] -> Double,
-  factorNatParam :: Int -> [[Double]] -> Likelihood v
+  factorLogValue :: [Likelihood v] -> Double,
+  factorNatParam :: Int -> [Likelihood v] -> Likelihood v
 }
+
+flipPair (a, b) = (b, a)
 
 promoteFactor :: (v -> u, u -> v) -> Factor v -> Factor u
 promoteFactor fs fac = Factor {
   factorExpFams = map (promoteExpFam fs) (factorExpFams fac),
-  factorLogValue = factorLogValue fac,
-  factorNatParam = \i ss -> promoteLikelihood fs (factorNatParam fac i ss)
+  factorLogValue = \ls -> factorLogValue fac (map (promoteLikelihood (flipPair fs)) ls),
+  factorNatParam = \i ls -> promoteLikelihood fs (factorNatParam fac i (map (promoteLikelihood (flipPair fs)) ls))
 }
 
 constFactor :: Eq v => ExpFam v -> v -> Factor v
 constFactor ss x = Factor {
   factorExpFams = [ss],
-  factorLogValue = \[s] -> if ssv == s then 0 else negInfinity,
+  factorLogValue = \[val] -> if val == KnownValue x then 0 else negInfinity,
   factorNatParam = \0 [_] -> KnownValue x
-} where ssv = expFamSufStat ss x
+}
 
 -- gaussianFactor :: Factor Double
 -- gaussianFactor =
@@ -66,13 +69,13 @@ expFamFactor ef argExpFams eta@(etaBase, etaWeights) =
   Factor {
     factorExpFams = ef:argExpFams,
     -- TODO filter
-    factorLogValue = \(ss:argss) -> expFamLogProbability ef eta (argSsToFeatures argss) ss,
-    factorNatParam = NatParam .: fnp
+    factorLogValue = expSufStatAndFeatures >>> \(ss, feats) -> expFamLogProbability ef eta feats ss,
+    factorNatParam = \i ls -> NatParam (fnp i (expSufStatAndFeatures ls))
   }
-  where argSsToFeatures = concat . zipWith expFamSufStatToFeatures argExpFams
-        fnp 0 (_:argss) = getNatParam ef eta $ argSsToFeatures argss
-        fnp n (ss:argss) =
-          let gradProbNp = grad (\np -> dotProduct np (map auto ss) - expFamG ef np) $ getNatParam ef eta $ argSsToFeatures argss
+  where expSufStatAndFeatures (likelihood:argsLikelihoods) = (expSufStat ef likelihood, concat [expFamSufStatToFeatures aef (expSufStat aef l) | (l, aef) <- zip argsLikelihoods argExpFams])
+        fnp 0 (_, feats) = getNatParam ef eta feats
+        fnp n (ss, feats) =
+          let gradProbNp = grad (\np -> dotProduct np (map auto ss) - expFamG ef np) $ getNatParam ef eta feats
               minFeatureIndex = sum $ map expFamFeaturesD $ take (n-1) argExpFams
               thisArgDim = expFamFeaturesD (argExpFams !! (n-1))
               relevantWeights = map (take thisArgDim . drop minFeatureIndex) etaWeights
@@ -172,13 +175,13 @@ varCovarianceFeatures graph state varid =
 factorExpLogValue :: FactorGraph v -> FactorGraphState v -> FactorId -> Double
 factorExpLogValue graph state factorid =
   let (factor, varids) = factorGraphFactors graph ! factorid
-  in factorLogValue factor $ map (varExpSufStat graph state) varids
+  in factorLogValue factor $ map (state !) varids
 
 newVarLikelihood :: Eq v => FactorGraph v -> FactorGraphState v -> VarId -> Maybe (Likelihood v)
 newVarLikelihood graph state varid =
   let (_, fids) = factorGraphVars graph ! varid
       fnp (factor, varids) =
-        factorNatParam factor (fromJust $ elemIndex varid varids) $ map (varExpSufStat graph state) varids
+        factorNatParam factor (fromJust $ elemIndex varid varids) $ map (state !) varids
   in productLikelihoods $ map (fnp . (factorGraphFactors graph !)) fids
 
 initTemplateParams :: FactorGraphTemplate v -> FactorGraphParams
@@ -199,22 +202,40 @@ updateTemplateParams template origParams states = Map.mapWithKey updateParam ori
 
 -- logOddsToProbability x = exp (x - logSumExp [0, x])
 
+-- TODO: get this to work with gibbs sampling.  Need support for deterministic
+-- functions.
 ifThenElseFactor :: ExpFam Value -> Factor Value
 ifThenElseFactor ef = Factor {
     factorExpFams = [ef, boolValueExpFam, ef, ef],
-    -- factorLogValue = \[[n1a, n2a], [logodds], [n1b, n2b], [n1c, n2c]] ->
+    factorLogValue = \[lx, lc, la, lb] ->
+      let aCrossEntropy = expFamCrossEntropy ef lx la
+          bCrossEntropy = expFamCrossEntropy ef lx lb
+      in case lc of
+        KnownValue (BoolValue False) -> aCrossEntropy
+        KnownValue (BoolValue True) -> bCrossEntropy
+        NatParam _ -> let [p] = expSufStat ef lc in logSumExp [log (1-p) + aCrossEntropy, log p + bCrossEntropy],
     factorNatParam = fnp
   }
-  where fnp 0 [_, [p], ea, eb] =
-          let ex = [(1 - p) * a + p * b | (a, b) <- zip ea eb]
-          in expFamSufStatToLikelihood ef ex
-        fnp 1 [ex, _, ea, eb] =
-          let da = expFamKLDivergence ef (expFamSufStatToLikelihood ef ex) (expFamSufStatToLikelihood ef ea)
-              db = expFamKLDivergence ef (expFamSufStatToLikelihood ef ex) (expFamSufStatToLikelihood ef eb)
-          in NatParam [da - db]
-        fnp 2 [ex, [p], _, eb] = case expFamSufStatToLikelihood ef ex of
-           KnownValue kv -> KnownValue kv
-           NatParam np -> NatParam $ map (*(1 - p)) np
-        fnp 3 [ex, [p], ea, _] = case expFamSufStatToLikelihood ef ex of
-           KnownValue kv -> KnownValue kv
-           NatParam np -> NatParam $ map (*p) np
+  where fnp 0 [_, lc, la, lb] = case lc of
+          KnownValue (BoolValue False) -> la
+          KnownValue (BoolValue True) -> lb
+          NatParam lp ->
+            let [p] = expSufStat ef (NatParam lp)
+                ex = [(1 - p) * a + p * b | (a, b) <- zip (expSufStat ef la) (expSufStat ef lb)]
+            in expFamSufStatToLikelihood ef ex
+        fnp 1 [lx, _, la, lb] =
+          let aCrossEntropy = expFamCrossEntropy ef lx la
+              bCrossEntropy = expFamCrossEntropy ef lx lb
+          in NatParam [aCrossEntropy - bCrossEntropy]
+        fnp 2 [lx, lc, _, lb] = case (lx, lc) of
+          (_, KnownValue (BoolValue True)) -> NatParam $ replicate (expFamD ef) 0
+          -- TODO: reasonable?
+          (KnownValue xv, _) -> KnownValue xv
+          (NatParam xp, NatParam lp) ->
+            let [p] = expSufStat ef (NatParam lp) in NatParam $ map (*(1 - p)) xp
+        fnp 3 [lx, lc, la, _] = case (lx, lc) of
+          (_, KnownValue (BoolValue False)) -> NatParam $ replicate (expFamD ef) 0
+          -- TODO: reasonable?
+          (KnownValue xv, _) -> KnownValue xv
+          (NatParam xp, NatParam lp) ->
+            let [p] = expSufStat ef (NatParam lp) in NatParam $ map (*p) xp

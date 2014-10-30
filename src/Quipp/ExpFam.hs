@@ -2,7 +2,7 @@
 
 module Quipp.ExpFam (ExpFam(ExpFam, expFamD, expFamSufStat, expFamG, expFamSample, expFamDefaultNatParam),
                      expFamFeaturesD, expFamSufStatToFeatures, expFamFeaturesToSufStat,
-                     expFamSufStatToLikelihood, expFamKLDivergence,
+                     expFamSufStatToLikelihood, expFamCrossEntropy,
                      getNatParam,
                      Params,
                      promoteExpFam, expFamLogProbability, expFamMLE,
@@ -151,16 +151,20 @@ covarianceSufStat ef (KnownValue v) = outerProduct ss ss
 covarianceSufStat ef (NatParam np) =
   hessian (expFamG ef) np
 
-expFamEntropy :: Eq v => ExpFam v -> Likelihood v -> Double
--- TODO: reasonable?
-expFamEntropy ef (KnownValue v) = 0
-expFamEntropy ef (NatParam p) = dotProduct p (expSufStat ef (NatParam p)) - expFamG ef p
 
-expFamKLDivergence :: Eq v => ExpFam v -> Likelihood v -> Likelihood v -> Double
-expFamKLDivergence ef (KnownValue a) l = - likelihoodLogProbability ef l a
-expFamKLDivergence ef (NatParam p) (NatParam q) =
-  expFamG ef q - expFamG ef p - dotProduct (zipWith (-) q p) (expSufStat ef (NatParam p))
-expFamKLDivergence ef (NatParam p) (KnownValue v) = infinity
+expFamCrossEntropy :: Eq v => ExpFam v -> Likelihood v -> Likelihood v -> Double
+-- TODO: reasonable?
+expFamCrossEntropy ef (KnownValue p) (KnownValue q) | p == q = 0.0
+expFamCrossEntropy ef _ (KnownValue q) = infinity
+-- E_P(-log Q(X)) = E_P(g(eta_Q) - eta_Q * phi(X)) = g(eta_Q) - eta_Q * E_P(phi(X))
+expFamCrossEntropy ef p (NatParam q) = expFamG ef q - dotProduct q (expSufStat ef p)
+
+-- expFamEntropy :: Eq v => ExpFam v -> Likelihood v -> Double
+-- expFamEntropy ef l = expFamCrossEntropy ef l l
+-- 
+-- -- KL(P || Q) = H(P) - E_P(-log Q(X))
+-- expFamKLDivergence :: Eq v => ExpFam v -> Likelihood v -> Likelihood v -> Double
+-- expFamKLDivergence ef p q = expFamEntropy p - expFamCrossEntropy p q
 
 mkExpFam :: [v -> Double] -> (forall s. (RealFloat s, Mode s, Scalar s ~ Double) => [s] -> s) -> ([Double] -> Likelihood v) -> ([Double] -> RVar v) -> [Double] -> [Bool] -> ExpFam v
 mkExpFam fs g like sample np mask = ExpFam {
