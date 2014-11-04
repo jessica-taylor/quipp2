@@ -1,10 +1,10 @@
 {-# LANGUAGE TupleSections #-}
 
 module Quipp.Factor (
-  Factor(Factor, factorExpFams, factorLogValue, factorNatParam),
+  Factor(Factor, factorExpFams, factorLogValue, factorNatParam, factorBayesNetOutput),
   promoteFactor, constFactor, expFamFactor,
   VarId, RandFunId, FactorId, FactorGraph(FactorGraph, factorGraphVars, factorGraphFactors),
-  FactorGraphTemplate(FactorGraphTemplate, factorGraphTemplateVars, factorGraphTemplateFactors),
+  FactorGraphTemplate(FactorGraphTemplate, factorGraphTemplateRandFunctions, factorGraphTemplateVars, factorGraphTemplateFactors),
   makeFactorGraphTemplate, instantiateTemplate,
   FactorGraphState, initFactorGraphState, varExpSufStat, newVarLikelihood,
   factorExpLogValue,

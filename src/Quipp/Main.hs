@@ -69,11 +69,6 @@ vmpStep templ (state, params) = do
   let params' = updateTemplateParams templ params [(1.0, state')]
   return (state', params')
 
-takeEvery :: Int -> [a] -> [a]
-takeEvery _ [] = []
-takeEvery n (x:xs) = x : takeEvery n (drop (n-1) xs)
-
-
 gibbsStep :: FactorGraphTemplate Value -> FST -> RVarT Maybe FST
 gibbsStep templ (state, params) = do
   let factorGraph = instantiateTemplate templ params

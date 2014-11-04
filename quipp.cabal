@@ -16,7 +16,7 @@ extra-source-files:  README.md
 cabal-version:       >=1.10
 
 library
-  exposed-modules:     Quipp.Parser, Quipp.Factor, Quipp.Value, Quipp.ExpFam, Quipp.Vmp
+  exposed-modules:     Quipp.Parser, Quipp.Factor, Quipp.Value, Quipp.ExpFam, Quipp.Vmp, Quipp.BayesNet, Quipp.ParamInference
   -- other-modules:       
   -- other-extensions:    
   build-depends:

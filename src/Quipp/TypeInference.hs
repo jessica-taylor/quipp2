@@ -312,7 +312,7 @@ ifThenElse pvar (EitherGraphValue p1 a b) (EitherGraphValue p2 c d) = do
 ifThenElse pvar (PureLeftGraphValue a) (PureLeftGraphValue b) =
   PureLeftGraphValue <$> ifThenElse pvar a b
 
-ifThenElse pvar (PureRightGraphValue a) (PureLeftGraphValue b) =
+ifThenElse pvar (PureRightGraphValue a) (PureRightGraphValue b) =
   PureRightGraphValue <$> ifThenElse pvar a b
 
 ifThenElse pvar (PureLeftGraphValue a) (PureRightGraphValue b) =

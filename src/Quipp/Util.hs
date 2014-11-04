@@ -1,8 +1,9 @@
+{-# LANGUAGE RankNTypes, FlexibleContexts #-}
 module Quipp.Util where
 
 import Control.Monad (liftM)
 import Debug.Trace
-import Data.Random (RVarT, RVar, StdRandom(StdRandom), runRVar)
+import Data.Random (RandomSource, RVarT, RVar, StdRandom(StdRandom), runRVar, runRVarT, runRVarTWith)
 import qualified Data.Packed.Matrix as Mat
 import Numeric.LinearAlgebra.Algorithms (linearSolve, pinv)
 
@@ -11,8 +12,15 @@ infixr 9 .:
 
 traced label x = trace (label ++ " " ++ show x) x
 
+takeEvery :: Int -> [a] -> [a]
+takeEvery _ [] = []
+takeEvery n (x:xs) = x : takeEvery n (drop (n-1) xs)
 
 sampleRVar v = runRVar v StdRandom
+sampleRVarT v = runRVarT v StdRandom
+
+sampleRVarTWith :: RandomSource m StdRandom => (forall t. n t -> m t) -> RVarT n a -> m a
+sampleRVarTWith f v = runRVarTWith f v StdRandom
 
 infinity :: Double
 infinity = read "Infinity"
