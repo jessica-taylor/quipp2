@@ -28,7 +28,7 @@ data AnnotatedExprBody = VarAExpr String | LambdaAExpr String TypeExpr Annotated
 type AnnotatedExpr = (TypeExpr, AnnotatedExprBody)
 
 -- Un-annotated expressions.
-data Expr = VarExpr String | OfTypeExpr Expr TypeExpr | LambdaExpr String Expr | AppExpr Expr Expr | DefExpr String Expr Expr | LiteralExpr Value | AdtExpr AdtDefinition Expr | CaseExpr Expr [(PatternExpr, Expr)] deriving (Eq, Ord, Show)
+data Expr = VarExpr String | WithTypeExpr Expr TypeExpr | LambdaExpr String Expr | AppExpr Expr Expr | DefExpr String Expr Expr | LiteralExpr Value | AdtExpr AdtDefinition Expr | CaseExpr Expr [(PatternExpr, Expr)] deriving (Eq, Ord, Show)
 
 type TypeId = Int
 
