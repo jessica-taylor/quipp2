@@ -1,5 +1,6 @@
 module Quipp.Util where
 
+import Control.Monad (liftM)
 import Debug.Trace
 import Data.Random (RVarT, RVar, StdRandom(StdRandom), runRVar)
 import qualified Data.Packed.Matrix as Mat

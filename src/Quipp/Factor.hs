@@ -216,14 +216,14 @@ orLikelihood (KnownValue (BoolValue a)) (KnownValue (BoolValue b)) =
 orLikelihood a b =
   let [pa] = expSufStat boolValueExpFam a
       [pb] = expSufStat boolValueExpFam b
-  in expSufStatToLikelihood boolValueExpFam [1 - (1 - pa) * (1 - pb)]
+  in expFamSufStatToLikelihood boolValueExpFam [1 - (1 - pa) * (1 - pb)]
 
 
 notFactor :: Factor Value
 notFactor = Factor {
     factorExpFams = [boolValueExpFam, boolValueExpFam],
-    factorLogValue = \[ly, lx] -> expFamCrossEntropy ef ly (notLikelihood lx),
-    factorNatParam = fnp
+    factorLogValue = \[ly, lx] -> expFamCrossEntropy boolValueExpFam ly (notLikelihood lx),
+    factorNatParam = fnp,
     factorBayesNetOutput = Just (True, 0)
   }
   where fnp 0 [_, lx] = notLikelihood lx

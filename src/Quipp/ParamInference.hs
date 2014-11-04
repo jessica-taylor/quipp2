@@ -11,19 +11,19 @@ import Quipp.TypeInference
 import Quipp.Vmp
 
 
-samplerToSamples :: Int -> GraphBuilder GraphValue -> GraphBuilder [GraphValue]
+samplerToSamples :: Int -> GraphBuilder Value GraphValue -> GraphBuilder Value [GraphValue]
 samplerToSamples n model = do
   LambdaGraphValue sampler <- model
   replicateM n (sampler UnitGraphValue)
 
-takeSamples :: Int -> GraphBuilder GraphValue -> FactorGraphParams -> RVar [FrozenGraphValue]
+takeSamples :: Int -> GraphBuilder Value GraphValue -> FactorGraphParams -> RVar [FrozenGraphValue]
 takeSamples n model params = do
   let (template, samps) = runGraphBuilder (samplerToSamples model)
   assignment <- sampleBayesNet (instantiateTemplate template params)
   return $ map (freezeGraphValue (assignment !)) samps
 
 
-conditionedNetwork :: TypeExpr -> GraphBuilder GraphValue -> [FrozenGraphValue] -> GraphBuilder ()
+conditionedNetwork :: TypeExpr -> GraphBuilder Value GraphValue -> [FrozenGraphValue] -> GraphBuilder Value ()
 conditionedNetwork t model condValues = do
   samps <- samplerToSamples model
   let cond value samp = do
@@ -55,7 +55,7 @@ data ParamInferenceOptions = {
   optsNumEMSteps :: Int
 }
 
-inferParameters :: ParamInferenceOptions -> TypeExpr -> GraphBuilder GraphValue -> RVar (FactorGraphParams, [FactorGraphParams])
+inferParameters :: ParamInferenceOptions -> TypeExpr -> GraphBuilder Value GraphValue -> RVar (FactorGraphParams, [FactorGraphParams])
 inferParameters opts t model = do
   let (singleSampleTemplate, _) = runGraphBuilder model
   randParams <- randTemplateParams singleSampleTemplate
