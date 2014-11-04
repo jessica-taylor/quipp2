@@ -9,7 +9,8 @@ module Quipp.Factor (
   FactorGraphState, initFactorGraphState, varExpSufStat, newVarLikelihood,
   factorExpLogValue,
   FactorGraphParams, initTemplateParams, updateTemplateParams,
-  ifThenElseFactor) where
+  ifThenElseFactor,
+  notFactor) where
 
 import Control.Arrow ((>>>))
 import Control.Monad (liftM)
@@ -28,7 +29,8 @@ import Quipp.Util
 data Factor v = Factor {
   factorExpFams :: [ExpFam v],
   factorLogValue :: [Likelihood v] -> Double,
-  factorNatParam :: Int -> [Likelihood v] -> Likelihood v
+  factorNatParam :: Int -> [Likelihood v] -> Likelihood v,
+  factorBayesNetOutput :: Maybe (Bool, Int)
 }
 
 flipPair (a, b) = (b, a)
@@ -37,14 +39,16 @@ promoteFactor :: (v -> u, u -> v) -> Factor v -> Factor u
 promoteFactor fs fac = Factor {
   factorExpFams = map (promoteExpFam fs) (factorExpFams fac),
   factorLogValue = \ls -> factorLogValue fac (map (promoteLikelihood (flipPair fs)) ls),
-  factorNatParam = \i ls -> promoteLikelihood fs (factorNatParam fac i (map (promoteLikelihood (flipPair fs)) ls))
+  factorNatParam = \i ls -> promoteLikelihood fs (factorNatParam fac i (map (promoteLikelihood (flipPair fs)) ls)),
+  factorBayesNetOutput = factorBayesNetOutput fac
 }
 
 constFactor :: Eq v => ExpFam v -> v -> Factor v
 constFactor ss x = Factor {
   factorExpFams = [ss],
   factorLogValue = \[val] -> if val == KnownValue x then 0 else negInfinity,
-  factorNatParam = \0 [_] -> KnownValue x
+  factorNatParam = \0 [_] -> KnownValue x,
+  factorBayesNetOutput = Just (True, 0)
 }
 
 -- gaussianFactor :: Factor Double
@@ -70,7 +74,8 @@ expFamFactor ef argExpFams eta@(etaBase, etaWeights) =
     factorExpFams = ef:argExpFams,
     -- TODO filter
     factorLogValue = expSufStatAndFeatures >>> \(ss, feats) -> expFamLogProbability ef eta feats ss,
-    factorNatParam = \i ls -> NatParam (fnp i (expSufStatAndFeatures ls))
+    factorNatParam = \i ls -> NatParam (fnp i (expSufStatAndFeatures ls)),
+    factorBayesNetOutput = Just (False, 0)
   }
   where expSufStatAndFeatures (likelihood:argsLikelihoods) = (expSufStat ef likelihood, concat [expFamSufStatToFeatures aef (expSufStat aef l) | (l, aef) <- zip argsLikelihoods argExpFams])
         fnp 0 (_, feats) = getNatParam ef eta feats
@@ -200,6 +205,35 @@ updateTemplateParams template origParams states = Map.mapWithKey updateParam ori
                     varExpSufStat origGraph state svarid)
           in expFamMLE ef [factorValues factorId weight state | factorId <- factorIds, (weight, state) <- states] origParam !! 30
 
+notLikelihood :: Likelihood Value -> Likelihood Value
+notLikelihood (KnownValue (BoolValue False)) = KnownValue (BoolValue True)
+notLikelihood (KnownValue (BoolValue True)) = KnownValue (BoolValue False)
+notLikelihood (NatParam [np]) = NatParam [-np]
+
+orLikelihood :: Likelihood Value -> Likelihood Value -> Likelihood Value
+orLikelihood (KnownValue (BoolValue a)) (KnownValue (BoolValue b)) =
+  KnownValue (BoolValue (a || b))
+orLikelihood a b =
+  let [pa] = expSufStat boolValueExpFam a
+      [pb] = expSufStat boolValueExpFam b
+  in expSufStatToLikelihood boolValueExpFam [1 - (1 - pa) * (1 - pb)]
+
+
+notFactor :: Factor Value
+notFactor = Factor {
+    factorExpFams = [boolValueExpFam, boolValueExpFam],
+    factorLogValue = \[ly, lx] -> expFamCrossEntropy ef ly (notLikelihood lx),
+    factorNatParam = fnp
+    factorBayesNetOutput = Just (True, 0)
+  }
+  where fnp 0 [_, lx] = notLikelihood lx
+        fnp 1 [ly, _] = notLikelihood ly
+
+-- orFactor :: Factor Value
+-- orFactor = Factor {
+--     factorExpFams = [boolValueExpFam, boolValueExpFam],
+--     factorLogValue = 
+
 -- logOddsToProbability x = exp (x - logSumExp [0, x])
 
 -- TODO: get this to work with gibbs sampling.  Need support for deterministic
@@ -214,7 +248,8 @@ ifThenElseFactor ef = Factor {
         KnownValue (BoolValue False) -> aCrossEntropy
         KnownValue (BoolValue True) -> bCrossEntropy
         NatParam _ -> let [p] = expSufStat ef lc in logSumExp [log (1-p) + aCrossEntropy, log p + bCrossEntropy],
-    factorNatParam = fnp
+    factorNatParam = fnp,
+    factorBayesNetOutput = Just (True, 0)
   }
   where fnp 0 [_, lc, la, lb] = case lc of
           KnownValue (BoolValue False) -> la

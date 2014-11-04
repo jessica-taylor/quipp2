@@ -91,3 +91,19 @@ for VMP and pure Gibbs, need accurate messages.  If messages are inaccurate, we 
 
 
 
+-----------------------
+
+parameter testing framework:
+
+What's the best way to test out parameter inference ability?
+We want some way to run the model forwards starting from some (random?) parameters, then infer parameters, and see how close we got.
+
+But do we also want to keep track of latent variables?
+This is a slight problem, because the program forms a factor graph.  Factor graphs cannot always be sampled from efficiently.  Perhaps we want to mark factors as either Bayesian network nodes or non-Bayesian factors (such as conditions).
+
+-------------------------
+
+How to implement recursive data structures?  We want mu types.  But to do this, we need to have pure eithers.  Namely, in addition to EitherGraphValue, we have PureLeftGraphValue and PureRightGraphValue.  We will also have MuGraphValue.
+
+
+

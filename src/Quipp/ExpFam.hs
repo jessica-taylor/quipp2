@@ -50,7 +50,6 @@ expFamFeaturesToSufStat ef features
           getSS (False:ms) fs = 0 : getSS ms fs
           getSS _ _ = undefined
 
-
 promoteExpFam :: (v -> u, u -> v) -> ExpFam v -> ExpFam u
 promoteExpFam (f, finv) ef = ExpFam {
   expFamD = expFamD ef,
@@ -151,7 +150,6 @@ covarianceSufStat ef (KnownValue v) = outerProduct ss ss
 covarianceSufStat ef (NatParam np) =
   hessian (expFamG ef) np
 
-
 expFamCrossEntropy :: Eq v => ExpFam v -> Likelihood v -> Likelihood v -> Double
 -- TODO: reasonable?
 expFamCrossEntropy ef (KnownValue p) (KnownValue q) | p == q = 0.0
@@ -177,7 +175,6 @@ mkExpFam fs g like sample np mask = ExpFam {
   expFamFeaturesMask = mask
 }
 
-
 gaussianExpFam :: ExpFam Double
 gaussianExpFam = mkExpFam [id, (^2)] g like sample [0, -0.0001] [True, False]
   where g :: (RealFloat a, Mode a) => [a] -> a
@@ -193,7 +190,6 @@ gaussianExpFam = mkExpFam [id, (^2)] g like sample [0, -0.0001] [True, False]
         sample [n1, n2] = let variance = -1 / (2 * n2)
                               mean = n1 * variance
                           in normal mean (sqrt variance)
-
 
 categoricalExpFam :: Int -> ExpFam Int
 categoricalExpFam n = mkExpFam (map ss [1 .. n-1]) g like sample (replicate (n-1) 0) (replicate (n-1) True)

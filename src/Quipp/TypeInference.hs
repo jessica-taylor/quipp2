@@ -190,7 +190,9 @@ typeInfer ctx expr = case runStateT (hindleyMilner ctx expr >>= reduceTypesInAnn
 
 -- perhaps the rest should be split up?
 
-data GraphValue = VarGraphValue VarId | LambdaGraphValue (GraphValue -> GraphBuilder Value GraphValue) | UnitGraphValue | PairGraphValue GraphValue GraphValue | EitherGraphValue VarId GraphValue GraphValue
+data GraphValue = VarGraphValue VarId | LambdaGraphValue (GraphValue -> GraphBuilder Value GraphValue) | UnitGraphValue | PairGraphValue GraphValue GraphValue | EitherGraphValue VarId GraphValue GraphValue | PureLeftGraphValue GraphValue | PureRightGraphValue GraphValue
+
+data FrozenGraphValue = FValueGraphValue Value | FUnitGraphValue | FPairGraphValue FrozenGraphValue FrozenGraphValue | FLeftGraphValue FrozenGraphValue | FRightGraphValue FrozenGraphValue deriving (Eq, Ord)
 
 instance Show GraphValue where
   show (VarGraphValue varid) = "$" ++ show varid
@@ -198,6 +200,46 @@ instance Show GraphValue where
   show UnitGraphValue = "()"
   show (PairGraphValue a b) = "(" ++ show a ++ ", " ++ show b ++ ")"
   show (EitherGraphValue varid left right) = "if " ++ show varid ++ " then Left " ++ show left ++ " else Right " ++ show right
+  show (PureLeftGraphValue left) = "(Left " ++ show left ++ ")"
+  show (PureRightGraphValue right) = "(Right " ++ show right ++ ")"
+
+instance Show FrozenGraphValue where
+  show (FValueGraphValue v) = show v
+  show FUnitGraphValue = "()"
+  show (FPairGraphValue a b) = "(" ++ show a ++ ", " ++ show b ++ ")"
+  show (FLeftGraphValue a) = "(Left " ++ show a ++ ")"
+  show (FRightGraphValue b) = "(Right " ++ show b ++ ")"
+
+freezeGraphValue :: (VarId -> Value) -> GraphValue -> FrozenGraphValue
+freezeGraphValue _ UnitGraphValue = FUnitGraphValue
+freezeGraphValue f (VarGraphValue v) = FValueGraphValue $ f v
+freezeGraphValue f (PairGraphValue a b) = FPairGraphValue (freezeGraphValue f a) (freezeGraphValue f b)
+freezeGraphValue f (EitherGraphValue c l r) = case f c of
+  BoolValue False -> FLeftGraphValue (freezeGraphValue f l)
+  BoolValue True -> FRightGraphValue (freezeGraphValue f r)
+  other -> error ("Bad boolean: " ++ other)
+freezeGraphValue f (PureLeftGraphValue l) = FLeftGraphValue (freezeGraphValue f l)
+freezeGraphValue f (PureRightGraphValue r) = FRightGraphValue (freezeGraphValue f r)
+freezeGraphValue _ other = error "Cannot freeze lambdas"
+
+unfreezeGraphValue :: TypeExpr -> FrozenGraphValue -> GraphBuilder GraphValue
+unfreezeGraphValue _ FUnitGraphValue = return UnitGraphValue
+unfreezeGraphValue t (FValueGraphValue value) = constValue (expFamForType t) value
+unfreezeGraphValue (AppTExpr (AppTExpr (ConstTExpr "Pair") firstType) secondType) (FPairGraphValue a b) =
+  PairGraphValue <$> unfreezeGraphValue firstType a <*> unfreezeGraphValue secondType b
+unfreezeGraphValue
+  (AppTExpr (AppTExpr (ConstTExpr "Either") leftType) rightType)
+  (FLeftGraphValue value) =
+    EitherGraphValue <$> constValue boolValueExpFam (BoolValue False) <*> return value <*> defaultGraphValue rightType
+unfreezeGraphValue
+  (AppTExpr (AppTExpr (ConstTExpr "Either") leftType) rightType)
+  (FRightGraphValue value) =
+    EitherGraphValue <$> constValue boolValueExpFam (BoolValue True) <*> defaultGraphValue leftType <*> return value
+  
+  
+  
+
+
 
 defaultGraphValue :: TypeExpr -> GraphBuilder Value GraphValue
 defaultGraphValue (AppTExpr (AppTExpr (ConstTExpr "pair") firstType) secondType) =
@@ -213,8 +255,8 @@ expFamForType (ConstTExpr "Double") = gaussianValueExpFam
 expFamForType (ConstTExpr "Bool") = boolValueExpFam
 expFamForType t = error $ "Can't get exponential family for type " ++ show t
 
-interpretPattern :: PatternExpr -> GraphValue -> GraphBuilder Value (Maybe [(String, GraphValue)])
-interpretPattern (VarPExpr var) value = return $ Just [(var, value)]
+-- interpretPattern :: PatternExpr -> GraphValue -> GraphBuilder Value (Maybe [(String, GraphValue)])
+-- interpretPattern (VarPExpr var) value = return $ Just [(var, value)]
 -- interpretPattern (ConstrPExpr constr 
 
 interpretExpr :: Map String (TypeExpr -> GraphBuilder Value GraphValue) -> AnnotatedExpr -> GraphBuilder Value GraphValue
@@ -247,30 +289,58 @@ interpretExpr m (t, LiteralAExpr value) = do
 
 -- interpretExpr m (t, CaseAExpr value cases) = 
 
-ifThenElse _ UnitGraphValue UnitGraphValue = return UnitGraphValue
+notVar :: VarId -> GraphBuilder VarId
+notVar x = do
+  y <- newVar boolValueExpFam
+  newFactor notFactor [y, x]
+  return y
 
-ifThenElse pvar (PairGraphValue a b) (PairGraphValue c d) = do
+ifThenElse' _ UnitGraphValue UnitGraphValue = return UnitGraphValue
+
+ifThenElse' pvar (PairGraphValue a b) (PairGraphValue c d) = do
   first <- ifThenElse pvar a c
   second <- ifThenElse pvar b d
   return $ PairGraphValue first second
 
-ifThenElse pvar (EitherGraphValue p1 a b) (EitherGraphValue p2 c d) = do
+ifThenElse' pvar (EitherGraphValue p1 a b) (EitherGraphValue p2 c d) = do
   VarGraphValue p' <- ifThenElse pvar (VarGraphValue p1) (VarGraphValue p2)
+  -- TODO: this is wrong!
   left <- ifThenElse pvar a c
   right <- ifThenElse pvar b d
   return $ EitherGraphValue p' left right
 
-ifThenElse pvar (LambdaGraphValue f) (LambdaGraphValue g) =
+ifThenElse' pvar (PureLeftGraphValue a) (PureLeftGraphValue b) =
+  PureLeftGraphValue <$> ifThenElse' pvar a b
+
+ifThenElse' pvar (PureRightGraphValue a) (PureLeftGraphValue b) =
+  PureRightGraphValue <$> ifThenElse' pvar a b
+
+ifThenElse' pvar (PureLeftGraphValue a) (PureRightGraphValue b) =
+  return $ EitherGraphValue pvar a b
+
+ifThenElse' pvar (PureRightGraphValue a) (PureLeftGraphValue b) =
+  EitherGraphValue <$> notVar pvar <*> return a <*> return b
+
+-- ifThenElse' pvar (PureLeftGraphValue a) (EitherGraphValue p b c) = 
+--   EitherGraphValue (
+
+ifThenElse' pvar (LambdaGraphValue f) (LambdaGraphValue g) =
   return $ LambdaGraphValue $ \x -> do
     fx <- f x
     gx <- g x
     ifThenElse pvar fx gx
 
-ifThenElse pvar (VarGraphValue v1) (VarGraphValue v2) = do
+ifThenElse' pvar (VarGraphValue v1) (VarGraphValue v2) = do
   ef <- getVarExpFam v1
   v3 <- newVar ef
   newFactor (ifThenElseFactor ef) [v3, pvar, v1, v2]
   return (VarGraphValue v3)
+
+expandEither (PureLeftGraphValue l) =
+  constValue boolValueExpFam (BoolValue False) <*> return l <*> defaultGraphValue rightType),
+expandEither other = return other
+
+ifThenElse pvar g1 g2 = ifThenElse' pvar <$> expandEither g1 <*> expandEither g2
 
 unifyGraphValues :: GraphValue -> GraphValue -> GraphBuilder Value GraphValue
 unifyGraphValues (VarGraphValue a) (VarGraphValue b) = liftM VarGraphValue $ conditionEqual a b
@@ -370,6 +440,7 @@ defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b, c))) [
          rightResult <- rightHandler rightVal
          ifThenElse isRightVar leftResult rightResult),
   ("uniformBool", return $ functionType (ConstTExpr "Unit") (ConstTExpr "Bool"), const $ return $ LambdaGraphValue $ \_ -> liftM VarGraphValue $ newVar boolValueExpFam),
+  ("uniformReal", return $ functionType (ConstTExpr "Unit") (ConstTExpr "Double"), const $ return $ LambdaGraphValue $ \_ -> liftM VarGraphValue $ newVar gaussianValueExpFam),
   ("true", return (ConstTExpr "Bool"), const $ liftM VarGraphValue $ constValue boolValueExpFam $ BoolValue True),
   ("false", return (ConstTExpr "Bool"), const $ liftM VarGraphValue $ constValue boolValueExpFam $ BoolValue False),
   ("randFunction", return (functionType (ConstTExpr "Unit") $ functionType (VarTExpr "a") $ VarTExpr "b"),

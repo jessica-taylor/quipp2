@@ -1,0 +1,14 @@
+let fun = randFunction unit;
+let x1 = uniformReal unit;
+let x2 = uniformReal unit;
+let x3 = uniformReal unit;
+let x4 = uniformReal unit;
+let x5 = uniformReal unit;
+let x6 = uniformReal unit;
+let y1 = unify (pair 1.1 6.2) (fun x1);
+let y2 = unify (pair 2.3 7.5) (fun x2);
+let y3 = unify (pair 3.4 8.2) (fun x3);
+let y4 = unify (pair 4.2 9.4) (fun x4);
+let y5 = unify (pair 5.5 10.1) (fun x5);
+let y6 = unify (pair 6.7 11.4) (fun x6);
+x1

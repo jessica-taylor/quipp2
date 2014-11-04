@@ -62,10 +62,6 @@ initFst templ =
   let params = initTemplateParams templ
   in (initFactorGraphState (instantiateTemplate templ params), params)
 
-iterateM :: Monad m => Int -> (a -> m a) -> a -> m [a]
-iterateM 0 _ x = return [x]
-iterateM n f x = liftM (x:) (f x >>= iterateM (n-1) f)
-
 vmpStep :: FactorGraphTemplate Value -> FST -> Maybe FST
 vmpStep templ (state, params) = do
   let factorGraph = instantiateTemplate templ params
@@ -91,7 +87,7 @@ stateList templ = iterate (fromJust . vmpStep templ) (initFst templ)
 stateList2 templ = iterateM 20 (gibbsStep templ) (initFst templ)
 
 main = do
-  contents <- readFile "examples/2d_clustering.quipp"
+  contents <- readFile "examples/pca.quipp"
   let resultExpr =
         case parse toplevel "FILE" contents of
           Left err -> error $ show err

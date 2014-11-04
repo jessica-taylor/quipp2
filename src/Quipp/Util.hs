@@ -19,6 +19,10 @@ infinity = read "Infinity"
 negInfinity :: Double
 negInfinity = read "-Infinity"
 
+iterateM :: Monad m => Int -> (a -> m a) -> a -> m [a]
+iterateM 0 _ x = return [x]
+iterateM n f x = liftM (x:) (f x >>= iterateM (n-1) f)
+
 logSumExp :: RealFloat a => [a] -> a
 logSumExp lps = mx + log (sum [exp (lp - mx) | lp <- lps])
   where mx = maximum lps
@@ -55,7 +59,7 @@ matMulByVector :: Num a => Matrix a -> [a] -> [a]
 matMulByVector m v = map (dotProduct v) m
 
 linSolve :: Matrix Double -> [Double] -> [Double]
-linSolve mat d = -- traceShow mat $ concat $ Mat.toLists $ linearSolve (Mat.fromLists mat) (Mat.fromLists (map return d))
+linSolve mat d =
   matMulByVector (Mat.toLists $ pinv $ Mat.fromLists mat) d
 
 
