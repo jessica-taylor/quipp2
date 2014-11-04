@@ -74,6 +74,14 @@ atomExpr = literalDouble <|> varExpr <|> withParens expr
 
 applicationExpr = foldl1 AppExpr <$> many1 atomExpr
 
+ofTypeExpr = do
+  expr <- applicationExpr
+  let rest = do
+        spacedString ":"
+        t <- typeExpr
+        return $ WithTypeExpr expr t
+  rest <|> return expr
+
 
 -- no operators for now
 
@@ -151,6 +159,6 @@ adtExpr = do
   return $ AdtExpr (AdtDefinition typeName paramNames cases) body
 
 
-expr = try letExpr <|> try lambdaExpr <|> try applicationExpr <|> try adtExpr <|> try caseExpr
+expr = try letExpr <|> try lambdaExpr <|> try ofTypeExpr <|> try adtExpr <|> try caseExpr
 
 toplevel = spaces >> expr

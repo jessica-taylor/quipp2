@@ -17,6 +17,7 @@ import Quipp.Value
 import Quipp.GraphBuilder
 import Quipp.Parser
 import Quipp.TypeInference
+import Quipp.ParamInference
 
 
 {-
@@ -55,34 +56,34 @@ factorGraphTempl = makeFactorGraphTemplate (clusterVars ++ valueVars) gaussianRa
 
 -}
 
-type FST = (FactorGraphState Value, FactorGraphParams)
-
-initFst :: FactorGraphTemplate Value -> FST
-initFst templ =
-  let params = initTemplateParams templ
-  in (initFactorGraphState (instantiateTemplate templ params), params)
-
-vmpStep :: FactorGraphTemplate Value -> FST -> Maybe FST
-vmpStep templ (state, params) = do
-  let factorGraph = instantiateTemplate templ params
-  state' <- stepVmp factorGraph state
-  let params' = updateTemplateParams templ params [(1.0, state')]
-  return (state', params')
-
-gibbsStep :: FactorGraphTemplate Value -> FST -> RVarT Maybe FST
-gibbsStep templ (state, params) = do
-  let factorGraph = instantiateTemplate templ params
-  newStates <- iterateM 100 (stepMH factorGraph) state
-  let params' = traced "\nparams: " $ updateTemplateParams templ params [(1.0, s) | s <- takeEvery 10 (tail newStates)]
-  return (last newStates, params')
-
-stateList templ = iterate (fromJust . vmpStep templ) (initFst templ)
-
-
-stateList2 templ = iterateM 20 (gibbsStep templ) (initFst templ)
+-- type FST = (FactorGraphState Value, FactorGraphParams)
+-- 
+-- initFst :: FactorGraphTemplate Value -> FST
+-- initFst templ =
+--   let params = initTemplateParams templ
+--   in (initFactorGraphState (instantiateTemplate templ params), params)
+-- 
+-- vmpStep :: FactorGraphTemplate Value -> FST -> Maybe FST
+-- vmpStep templ (state, params) = do
+--   let factorGraph = instantiateTemplate templ params
+--   state' <- stepVmp factorGraph state
+--   let params' = updateTemplateParams templ params [(1.0, state')]
+--   return (state', params')
+-- 
+-- gibbsStep :: FactorGraphTemplate Value -> FST -> RVarT Maybe FST
+-- gibbsStep templ (state, params) = do
+--   let factorGraph = instantiateTemplate templ params
+--   newStates <- iterateM 100 (stepMH factorGraph) state
+--   let params' = traced "\nparams: " $ updateTemplateParams templ params [(1.0, s) | s <- takeEvery 10 (tail newStates)]
+--   return (last newStates, params')
+-- 
+-- stateList templ = iterate (fromJust . vmpStep templ) (initFst templ)
+-- 
+-- 
+-- stateList2 templ = iterateM 20 (gibbsStep templ) (initFst templ)
 
 main = do
-  contents <- readFile "examples/pca.quipp"
+  contents <- readFile "examples/1d_clustering.quipp"
   let resultExpr =
         case parse toplevel "FILE" contents of
           Left err -> error $ show err
@@ -92,12 +93,14 @@ main = do
           Left err -> error err
           Right result -> result
       builder = interpretExpr (toInterpretContext defaultContext) typed
-      (template, result) = runGraphBuilder builder
+      -- (template, result) = runGraphBuilder builder
   print resultExpr
   print typed
   print result
-  gibbsStates <- runRVarTWith (\(Just x) -> return x) (stateList2 template) StdRandom
-  mapM_ (putStrLn . ("\nSTATE " ++) . show) gibbsStates
+  result <- runRVar $ inferParameters (ParamInferenceOptions {optsNumSamples = 6, optsNumEMSteps = 5}) (fst typed) builder
+  print result
+  -- gibbsStates <- runRVarTWith (\(Just x) -> return x) (stateList2 template) StdRandom
+  -- mapM_ (putStrLn . ("\nSTATE " ++) . show) gibbsStates
   -- x <- runRVarTWith (\(Just x) -> return x) stateList2 StdRandom
   -- mapM_ print $ take 10 x
   -- -- x <- runRVarTWith (\(Just x) -> return x) getStateList2 StdRandom
