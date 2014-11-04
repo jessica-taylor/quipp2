@@ -1,5 +1,6 @@
 module Quipp.BayesNet where
 
+import Debug.Trace
 import Data.Foldable (foldlM)
 import Data.Graph (topSort, graphFromEdges')
 import Data.List (elemIndex)
@@ -14,10 +15,12 @@ import Quipp.Factor
 
 varidToBayesNetFactor :: FactorGraph v -> VarId -> FactorId
 varidToBayesNetFactor graph varid =
-  head [fid | fid <- snd $ factorGraphVars graph ! varid,
+  case [fid | fid <- snd $ factorGraphVars graph ! varid,
               let (factor, varids) = factorGraphFactors graph ! fid,
               let Just (_, i) = factorBayesNetOutput factor,
-              varids !! i == varid]
+              varids !! i == varid] of
+    [uniqueFid] -> uniqueFid
+    other -> error ("Not a bayes net: " ++ show varid ++ ", " ++ show other)
 
 
 
@@ -35,8 +38,9 @@ sampleBayesNet graph =
         let ef = fst $ factorGraphVars graph ! varid
             factorid = varidToBayesNetFactor graph varid
             (factor, varids) = factorGraphFactors graph ! factorid
-            likelihood = factorNatParam factor (fromJust $ elemIndex varid varids) $ map (KnownValue . (state !)) varids
+            likelihood = trace ("fnp " ++ show factor ++ " " ++ show varid ++ " " ++ show varids) $ factorNatParam factor (fromJust $ elemIndex varid varids) $ map (KnownValue . (state !)) varids
         in do
+          traceShow ef $ return ()
           samp <- sampleLikelihood ef likelihood
           return $ Map.insert varid samp state
   in foldlM sampleNextVar Map.empty varidsInOrder

@@ -438,7 +438,13 @@ defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b, c))) [
          leftResult <- leftHandler leftVal
          rightResult <- rightHandler rightVal
          ifThenElse isRightVar leftResult rightResult),
-  ("uniformBool", return $ functionType (ConstTExpr "Unit") (ConstTExpr "Bool"), const $ return $ LambdaGraphValue $ \_ -> liftM VarGraphValue $ newVar boolValueExpFam),
+         -- TODO bayes net!
+  ("uniformBool",
+   return $ functionType (ConstTExpr "Unit") (ConstTExpr "Bool"),
+   const $ return $ LambdaGraphValue $ \_ -> do
+     v <- newVar boolValueExpFam
+     newFactor (expFamFactor boolValueExpFam [] ([0.0], [[]])) [v]
+     return $ VarGraphValue v),
   ("uniformReal", return $ functionType (ConstTExpr "Unit") (ConstTExpr "Double"), const $ return $ LambdaGraphValue $ \_ -> liftM VarGraphValue $ newVar gaussianValueExpFam),
   ("true", return (ConstTExpr "Bool"), const $ liftM VarGraphValue $ constValue boolValueExpFam $ BoolValue True),
   ("false", return (ConstTExpr "Bool"), const $ liftM VarGraphValue $ constValue boolValueExpFam $ BoolValue False),

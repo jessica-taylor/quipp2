@@ -8,18 +8,18 @@ module Quipp.Factor (
   makeFactorGraphTemplate, instantiateTemplate,
   FactorGraphState, initFactorGraphState, varExpSufStat, newVarLikelihood,
   factorExpLogValue,
-  FactorGraphParams, initTemplateParams, updateTemplateParams,
+  FactorGraphParams, randTemplateParams, updateTemplateParams,
   ifThenElseFactor,
   notFactor) where
 
 import Control.Arrow ((>>>))
-import Control.Monad (liftM)
+import Control.Monad (liftM, replicateM)
 import Debug.Trace
 import Data.List (elemIndex)
 import Data.Map (Map, (!))
 import qualified Data.Map as Map
 import Data.Maybe (fromJust)
-import Data.Random (RVar)
+import Data.Random (RVar, normal)
 import Numeric.AD (grad, auto)
 
 import Quipp.Value
@@ -32,6 +32,9 @@ data Factor v = Factor {
   factorNatParam :: Int -> [Likelihood v] -> Likelihood v,
   factorBayesNetOutput :: Maybe (Bool, Int)
 }
+
+instance Show (Factor v) where
+  show f = "<factor " ++ show (factorExpFams f) ++ ">"
 
 flipPair (a, b) = (b, a)
 
@@ -78,7 +81,7 @@ expFamFactor ef argExpFams eta@(etaBase, etaWeights) =
     factorBayesNetOutput = Just (False, 0)
   }
   where expSufStatAndFeatures (likelihood:argsLikelihoods) = (expSufStat ef likelihood, concat [expFamSufStatToFeatures aef (expSufStat aef l) | (l, aef) <- zip argsLikelihoods argExpFams])
-        fnp 0 (_, feats) = getNatParam ef eta feats
+        fnp 0 (_, feats) = trace ("gnp " ++ show ef ++ " " ++ show eta ++ " " ++ show feats) $ getNatParam ef eta feats
         fnp n (ss, feats) =
           let gradProbNp = grad (\np -> dotProduct np (map auto ss) - expFamG ef np) $ getNatParam ef eta feats
               minFeatureIndex = sum $ map expFamFeaturesD $ take (n-1) argExpFams
@@ -119,7 +122,7 @@ type FactorId = Int
 data FactorGraph v = FactorGraph {
   factorGraphVars :: Map VarId (ExpFam v, [FactorId]),
   factorGraphFactors :: Map FactorId (Factor v, [VarId])
-}
+} deriving Show
 
 type RandFunId = Int
 
@@ -127,7 +130,7 @@ data FactorGraphTemplate v = FactorGraphTemplate {
   factorGraphTemplateVars :: Map VarId (ExpFam v, [FactorId]),
   factorGraphTemplateRandFunctions :: Map RandFunId (ExpFam v, [ExpFam v], [FactorId]),
   factorGraphTemplateFactors :: Map FactorId (Either (Factor v) RandFunId, [VarId])
-}
+} deriving Show
 
 makeFactorGraphTemplate :: [(VarId, ExpFam v)] -> [(RandFunId, ExpFam v, [ExpFam v])] -> [(FactorId, Either (Factor v) RandFunId, [VarId])] -> FactorGraphTemplate v
 makeFactorGraphTemplate vars randfuns factors = FactorGraphTemplate (Map.fromList fgv) (Map.fromList fgrf) (Map.fromList fgf)
@@ -189,10 +192,12 @@ newVarLikelihood graph state varid =
         factorNatParam factor (fromJust $ elemIndex varid varids) $ map (state !) varids
   in productLikelihoods $ map (fnp . (factorGraphFactors graph !)) fids
 
-initTemplateParams :: FactorGraphTemplate v -> FactorGraphParams
-initTemplateParams = fmap getParam . factorGraphTemplateRandFunctions
-  where getParam (ef, featureEfs, _) =
-          (expFamDefaultNatParam ef, replicate (expFamFeaturesD ef) $ replicate (sum $ map expFamFeaturesD featureEfs) 0.0001)
+randTemplateParams :: FactorGraphTemplate v -> RVar FactorGraphParams
+randTemplateParams = fmap Map.fromList . mapM getParam . Map.toList . factorGraphTemplateRandFunctions
+  where getParam (rfid, (ef, featureEfs, _)) = do
+          base <- expFamRandomNatParam ef
+          weights <- replicateM (expFamFeaturesD ef) $ replicateM (sum $ map expFamFeaturesD featureEfs) (normal 0.0 1.0)
+          return (rfid, (base, weights))
 
 updateTemplateParams :: FactorGraphTemplate v -> FactorGraphParams -> [(Double, FactorGraphState v)] -> FactorGraphParams
 updateTemplateParams template origParams states = Map.mapWithKey updateParam origParams

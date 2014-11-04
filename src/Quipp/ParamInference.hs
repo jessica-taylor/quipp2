@@ -1,5 +1,6 @@
 module Quipp.ParamInference where
 
+import Debug.Trace
 import Control.Monad (replicateM, zipWithM_)
 import Data.Map (Map, (!))
 import qualified Data.Map as Map
@@ -14,14 +15,6 @@ import Quipp.Util
 import Quipp.Value
 import Quipp.Vmp
 
-randTemplateParams :: FactorGraphTemplate v -> RVar FactorGraphParams
-randTemplateParams = fmap Map.fromList . mapM getParam . Map.toList . factorGraphTemplateRandFunctions
-  where singleNumber = normal 0.0 1.0
-        getParam (rfid, (ef, featureEfs, _)) = do
-          base <- replicateM (expFamFeaturesD ef) singleNumber
-          weights <- replicateM (expFamFeaturesD ef) $ replicateM (sum $ map expFamFeaturesD featureEfs) singleNumber
-          return (rfid, (base, weights))
-
 samplerToSamples :: Int -> GraphBuilder Value GraphValue -> GraphBuilder Value [GraphValue]
 samplerToSamples n model = do
   LambdaGraphValue sampler <- model
@@ -30,6 +23,7 @@ samplerToSamples n model = do
 takeSamples :: Int -> GraphBuilder Value GraphValue -> FactorGraphParams -> RVar [FrozenGraphValue]
 takeSamples n model params = do
   let (template, samps) = runGraphBuilder (samplerToSamples n model)
+  traceShow template $ return ()
   assignment <- sampleBayesNet (instantiateTemplate template params)
   return $ map (freezeGraphValue (assignment !)) samps
 
@@ -44,11 +38,10 @@ conditionedNetwork t model condValues = do
 
 type FST = (FactorGraphState Value, FactorGraphParams)
 
-initFst :: FactorGraphTemplate Value -> FST
-initFst templ =
-  let params = initTemplateParams templ
-  in (initFactorGraphState (instantiateTemplate templ params), params)
-
+initFst :: FactorGraphTemplate Value -> RVar FST
+initFst templ = do
+  params <- randTemplateParams templ
+  return (initFactorGraphState (instantiateTemplate templ params), params)
 
 
 stepEM :: FactorGraphTemplate Value -> FST -> RVarT Maybe FST
@@ -73,7 +66,7 @@ inferParameters opts t model = do
   samps <- takeSamples (optsNumSamples opts) model randParams
   let condNet = conditionedNetwork t model samps
   let (condTemplate, _) = runGraphBuilder condNet
-  let fstGetter = iterateM (optsNumEMSteps opts) (stepEM condTemplate) (initFst condTemplate)
+  let fstGetter = sampleRVar (initFst condTemplate) >>= iterateM (optsNumEMSteps opts) (stepEM condTemplate)
   fstList <- sampleRVarTWith (\(Just x) -> return x) fstGetter
   return (randParams, map snd fstList)
 

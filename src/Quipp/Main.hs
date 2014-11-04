@@ -96,8 +96,7 @@ main = do
       -- (template, result) = runGraphBuilder builder
   print resultExpr
   print typed
-  print result
-  result <- runRVar $ inferParameters (ParamInferenceOptions {optsNumSamples = 6, optsNumEMSteps = 5}) (fst typed) builder
+  result <- sampleRVar $ inferParameters (ParamInferenceOptions {optsNumSamples = 6, optsNumEMSteps = 5}) (fst typed) builder
   print result
   -- gibbsStates <- runRVarTWith (\(Just x) -> return x) (stateList2 template) StdRandom
   -- mapM_ (putStrLn . ("\nSTATE " ++) . show) gibbsStates

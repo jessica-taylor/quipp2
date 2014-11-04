@@ -1,6 +1,6 @@
 {-# LANGUAGE RankNTypes, TypeFamilies, NoMonomorphismRestriction #-}
 
-module Quipp.ExpFam (ExpFam(ExpFam, expFamD, expFamSufStat, expFamG, expFamSample, expFamDefaultNatParam),
+module Quipp.ExpFam (ExpFam(ExpFam, expFamName, expFamD, expFamSufStat, expFamG, expFamSample, expFamRandomNatParam),
                      expFamFeaturesD, expFamSufStatToFeatures, expFamFeaturesToSufStat,
                      expFamSufStatToLikelihood, expFamCrossEntropy,
                      getNatParam,
@@ -18,20 +18,26 @@ import Data.Foldable (foldlM)
 import Data.Maybe (fromJust)
 import Data.Random (RVarT, RVar, normal, gamma)
 import Data.Random.Distribution.Categorical (categorical)
+import Data.Random.Distribution.Dirichlet (dirichlet)
+import Data.Random.Distribution.Exponential (exponential)
 import Numeric.AD (AD, Mode, Scalar, grad, hessian, auto)
 
 import Quipp.Util
 
 
 data ExpFam v = ExpFam {
+  expFamName :: String,
   expFamD :: Int,
   expFamSufStat :: v -> [Double],
   expFamG :: forall s. (RealFloat s, Mode s, Scalar s ~ Double) => [s] -> s,
   expFamSufStatToLikelihood :: [Double] -> Likelihood v,
   expFamSample :: [Double] -> RVar v,
-  expFamDefaultNatParam :: [Double],
+  expFamRandomNatParam :: RVar [Double],
   expFamFeaturesMask :: [Bool]
 }
+
+instance Show (ExpFam v) where
+  show = expFamName
 
 expFamFeaturesD :: ExpFam v -> Int
 expFamFeaturesD = length . filter id . expFamFeaturesMask
@@ -52,12 +58,13 @@ expFamFeaturesToSufStat ef features
 
 promoteExpFam :: (v -> u, u -> v) -> ExpFam v -> ExpFam u
 promoteExpFam (f, finv) ef = ExpFam {
+  expFamName = expFamName ef,
   expFamD = expFamD ef,
   expFamSufStat = expFamSufStat ef . finv,
   expFamG = expFamG ef,
   expFamSufStatToLikelihood = fmap f . expFamSufStatToLikelihood ef,
   expFamSample = liftM f . expFamSample ef,
-  expFamDefaultNatParam = expFamDefaultNatParam ef,
+  expFamRandomNatParam = expFamRandomNatParam ef,
   expFamFeaturesMask = expFamFeaturesMask ef
 }
 
@@ -164,25 +171,30 @@ expFamCrossEntropy ef p (NatParam q) = expFamG ef q - dotProduct q (expSufStat e
 -- expFamKLDivergence :: Eq v => ExpFam v -> Likelihood v -> Likelihood v -> Double
 -- expFamKLDivergence ef p q = expFamEntropy p - expFamCrossEntropy p q
 
-mkExpFam :: [v -> Double] -> (forall s. (RealFloat s, Mode s, Scalar s ~ Double) => [s] -> s) -> ([Double] -> Likelihood v) -> ([Double] -> RVar v) -> [Double] -> [Bool] -> ExpFam v
-mkExpFam fs g like sample np mask = ExpFam {
+mkExpFam :: String -> [v -> Double] -> (forall s. (RealFloat s, Mode s, Scalar s ~ Double) => [s] -> s) -> ([Double] -> Likelihood v) -> ([Double] -> RVar v) -> RVar [Double] -> [Bool] -> ExpFam v
+mkExpFam name fs g like sample np mask = ExpFam {
+  expFamName = name,
   expFamD = length fs,
   expFamSufStat = \v -> map ($ v) fs,
   expFamG = g,
   expFamSufStatToLikelihood = like,
   expFamSample = sample,
-  expFamDefaultNatParam = np,
+  expFamRandomNatParam = np,
   expFamFeaturesMask = mask
 }
 
 gaussianExpFam :: ExpFam Double
-gaussianExpFam = mkExpFam [id, (^2)] g like sample [0, -0.0001] [True, False]
+gaussianExpFam = mkExpFam "gaussian" [id, (^2)] g like sample randParam [True, False]
   where g :: (RealFloat a, Mode a) => [a] -> a
         g [n1, n2] | n2 >= 0 = 0/0
                    | otherwise = let variance = -1 / (2 * n2)
                                      mean = n1 * variance
                                  in log (2 * pi * variance) / 2 + mean^2/(2 * variance)
         g x = error ("bad gaussian natural parameter: " ++ show (map realToDouble x))
+        randParam = do
+          n1 <- normal 0.0 1.0
+          n2 <- exponential 0.1
+          return [n1, n2]
         like [ex, ex2] =
           let var = ex2 - ex^2 in
           if var > 0 then NatParam [ex / var, 1 / (1 * var)] else KnownValue ex
@@ -190,9 +202,10 @@ gaussianExpFam = mkExpFam [id, (^2)] g like sample [0, -0.0001] [True, False]
         sample [n1, n2] = let variance = -1 / (2 * n2)
                               mean = n1 * variance
                           in normal mean (sqrt variance)
+        sample other = error (show other)
 
 categoricalExpFam :: Int -> ExpFam Int
-categoricalExpFam n = mkExpFam (map ss [1 .. n-1]) g like sample (replicate (n-1) 0) (replicate (n-1) True)
+categoricalExpFam n = mkExpFam ("categorical " ++ show n) (map ss [1 .. n-1]) g like sample randParam (replicate (n-1) True)
   where ss i x = if x == i then 1.0 else 0.0
         g :: RealFloat a => [a] -> a
         g x | length x == n-1 = logSumExp (0:x)
@@ -200,6 +213,10 @@ categoricalExpFam n = mkExpFam (map ss [1 .. n-1]) g like sample (replicate (n-1
         like probs = undefined --halp
         sample :: [Double] -> RVar Int
         sample ns = categorical $ zip (logProbsToProbs (0:ns)) [0..]
+        randParam = do
+          (p0:probs) <- dirichlet (replicate n 0)
+          return $ map (\p -> log p - log p0) probs
+
 
 -- function log_gamma(xx)
 -- {
