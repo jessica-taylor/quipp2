@@ -240,6 +240,7 @@ unfreezeGraphValue
   (AppTExpr (AppTExpr (ConstTExpr "Either") leftType) rightType)
   (FRightGraphValue value) =
     EitherGraphValue <$> constValue boolValueExpFam (BoolValue True) <*> defaultGraphValue leftType <*> unfreezeGraphValue rightType value
+unfreezeGraphValue t other = error ("Cannot freeze " ++ show other ++ " : " ++ show t)
   
   
   
@@ -445,7 +446,12 @@ defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b, c))) [
      v <- newVar boolValueExpFam
      newFactor (expFamFactor boolValueExpFam [] ([0.0], [[]])) [v]
      return $ VarGraphValue v),
-  ("uniformReal", return $ functionType (ConstTExpr "Unit") (ConstTExpr "Double"), const $ return $ LambdaGraphValue $ \_ -> liftM VarGraphValue $ newVar gaussianValueExpFam),
+  ("standardNormal",
+   return $ functionType (ConstTExpr "Unit") (ConstTExpr "Double"),
+   const $ return $ LambdaGraphValue $ \_ -> do
+     v <- newVar gaussianValueExpFam
+     newFactor (expFamFactor gaussianValueExpFam [] ([0.0, -0.5], [[]])) [v]
+     return $ VarGraphValue v),
   ("true", return (ConstTExpr "Bool"), const $ liftM VarGraphValue $ constValue boolValueExpFam $ BoolValue True),
   ("false", return (ConstTExpr "Bool"), const $ liftM VarGraphValue $ constValue boolValueExpFam $ BoolValue False),
   ("randFunction", return (functionType (ConstTExpr "Unit") $ functionType (VarTExpr "a") $ VarTExpr "b"),

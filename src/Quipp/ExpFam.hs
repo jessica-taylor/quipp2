@@ -107,7 +107,7 @@ expFamLogProbability fam eta argFeatures ss = dotProduct np (map auto ss) - expF
   where np = getNatParam fam eta argFeatures
 
 expFamMLE :: ExpFam a -> [(Double, [Double], {- [[Double]], -} [Double])] -> Params Double -> [Params Double]
-expFamMLE fam samples etaStart = trace ("\nexpFamMLE " ++ show samples) $
+expFamMLE fam samples etaStart = --trace ("\nexpFamMLE " ++ show samples) $
   let f :: (RealFloat m, Mode m, Scalar m ~ Double) => [m] -> m
       f eta = sum [auto weight * expFamLogProbability fam params exs ys | (weight, exs, {- varxs, -} ys) <- samples]
         where params = vectorToParams fam eta
@@ -194,7 +194,7 @@ gaussianExpFam = mkExpFam "gaussian" [id, (^2)] g like sample randParam [True, F
         randParam = do
           n1 <- normal 0.0 1.0
           n2 <- exponential 0.1
-          return [n1, n2]
+          return [n1, -n2]
         like [ex, ex2] =
           let var = ex2 - ex^2 in
           if var > 0 then NatParam [ex / var, 1 / (1 * var)] else KnownValue ex

@@ -38,7 +38,7 @@ sampleBayesNet graph =
         let ef = fst $ factorGraphVars graph ! varid
             factorid = varidToBayesNetFactor graph varid
             (factor, varids) = factorGraphFactors graph ! factorid
-            likelihood = trace ("fnp " ++ show factor ++ " " ++ show varid ++ " " ++ show varids) $ factorNatParam factor (fromJust $ elemIndex varid varids) $ map (KnownValue . (state !)) varids
+            likelihood = factorNatParam factor (fromJust $ elemIndex varid varids) $ map (KnownValue . (state !)) varids
         in do
           traceShow ef $ return ()
           samp <- sampleLikelihood ef likelihood

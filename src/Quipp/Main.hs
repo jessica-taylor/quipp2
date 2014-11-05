@@ -83,7 +83,8 @@ factorGraphTempl = makeFactorGraphTemplate (clusterVars ++ valueVars) gaussianRa
 -- stateList2 templ = iterateM 20 (gibbsStep templ) (initFst templ)
 
 main = do
-  contents <- readFile "examples/1d_clustering.quipp"
+  -- contents <- readFile "examples/1d_clustering.quipp"
+  contents <- readFile "examples/pca.quipp"
   let resultExpr =
         case parse toplevel "FILE" contents of
           Left err -> error $ show err
@@ -96,8 +97,9 @@ main = do
       -- (template, result) = runGraphBuilder builder
   print resultExpr
   print typed
-  result <- sampleRVar $ inferParameters (ParamInferenceOptions {optsNumSamples = 6, optsNumEMSteps = 5}) (fst typed) builder
-  print result
+  let (AppTExpr (AppTExpr (ConstTExpr "->") _) t) = fst typed
+  result <- sampleRVar $ inferParameters (ParamInferenceOptions {optsNumSamples = 100, optsNumEMSteps = 20}) t builder
+  putStrLn $ "RESULT: " ++ show result
   -- gibbsStates <- runRVarTWith (\(Just x) -> return x) (stateList2 template) StdRandom
   -- mapM_ (putStrLn . ("\nSTATE " ++) . show) gibbsStates
   -- x <- runRVarTWith (\(Just x) -> return x) stateList2 StdRandom

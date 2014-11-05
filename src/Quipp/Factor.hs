@@ -81,7 +81,7 @@ expFamFactor ef argExpFams eta@(etaBase, etaWeights) =
     factorBayesNetOutput = Just (False, 0)
   }
   where expSufStatAndFeatures (likelihood:argsLikelihoods) = (expSufStat ef likelihood, concat [expFamSufStatToFeatures aef (expSufStat aef l) | (l, aef) <- zip argsLikelihoods argExpFams])
-        fnp 0 (_, feats) = trace ("gnp " ++ show ef ++ " " ++ show eta ++ " " ++ show feats) $ getNatParam ef eta feats
+        fnp 0 (_, feats) = getNatParam ef eta feats
         fnp n (ss, feats) =
           let gradProbNp = grad (\np -> dotProduct np (map auto ss) - expFamG ef np) $ getNatParam ef eta feats
               minFeatureIndex = sum $ map expFamFeaturesD $ take (n-1) argExpFams
