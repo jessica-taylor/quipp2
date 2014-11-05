@@ -196,7 +196,7 @@ randTemplateParams :: FactorGraphTemplate v -> RVar FactorGraphParams
 randTemplateParams = fmap Map.fromList . mapM getParam . Map.toList . factorGraphTemplateRandFunctions
   where getParam (rfid, (ef, featureEfs, _)) = do
           base <- expFamRandomNatParam ef
-          weights <- replicateM (expFamFeaturesD ef) $ replicateM (sum $ map expFamFeaturesD featureEfs) (normal 0.0 1.0)
+          weights <- replicateM (expFamFeaturesD ef) $ replicateM (sum $ map expFamFeaturesD featureEfs) (normal 0.0 100.0)
           return (rfid, (base, weights))
 
 updateTemplateParams :: FactorGraphTemplate v -> FactorGraphParams -> [(Double, FactorGraphState v)] -> FactorGraphParams

@@ -60,12 +60,12 @@ data ParamInferenceOptions = ParamInferenceOptions {
   optsNumEMSteps :: Int
 }
 
-inferParameters :: ParamInferenceOptions -> TypeExpr -> GraphBuilder Value GraphValue -> RVar (FactorGraphParams, [([FrozenGraphValue], FactorGraphParams)])
+inferParameters :: ParamInferenceOptions -> TypeExpr -> GraphBuilder Value GraphValue -> RVar (FactorGraphParams, [FrozenGraphValue], [FrozenGraphValue], [([FrozenGraphValue], FactorGraphParams)])
 inferParameters opts t model = do
   let (singleSampleTemplate, _) = runGraphBuilder model
   randParams <- randTemplateParams singleSampleTemplate
   samps <- takeSamples (optsNumSamples opts) model randParams
-  trace ("samples: " ++ show samps) $ return ()
+  -- trace ("samples: " ++ show samps) $ return ()
   let condNet = conditionedNetwork t model (map snd samps)
   let (condTemplate, latents) = runGraphBuilder condNet
   let fstGetter = sampleRVar (initFst condTemplate) >>= iterateM (optsNumEMSteps opts) (stepEM condTemplate)
@@ -73,5 +73,8 @@ inferParameters opts t model = do
   let assnValue assn varid = case assn ! varid of
         KnownValue v -> v
         NatParam np -> error ("Gibbs sampling is fuzzy? " ++ show varid ++ ", " ++ show assn)
-  return (randParams, [(map (freezeGraphValue (assnValue assn)) latents, params) | (assn, params) <- tail fstList])
+  return (randParams,
+          map fst samps,
+          map snd samps,
+          [(map (freezeGraphValue (assnValue assn)) latents, params) | (assn, params) <- tail fstList])
 
