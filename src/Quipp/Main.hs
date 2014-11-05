@@ -98,7 +98,7 @@ main = do
   print resultExpr
   print typed
   let (AppTExpr (AppTExpr (ConstTExpr "->") _) t) = fst typed
-  result <- sampleRVar $ inferParameters (ParamInferenceOptions {optsNumSamples = 100, optsNumEMSteps = 20}) t builder
+  result <- sampleRVar $ inferParameters (ParamInferenceOptions {optsNumSamples = 20, optsNumEMSteps = 5}) t builder
   putStrLn $ "RESULT: " ++ show result
   -- gibbsStates <- runRVarTWith (\(Just x) -> return x) (stateList2 template) StdRandom
   -- mapM_ (putStrLn . ("\nSTATE " ++) . show) gibbsStates

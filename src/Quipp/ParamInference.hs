@@ -1,7 +1,7 @@
 module Quipp.ParamInference where
 
 import Debug.Trace
-import Control.Monad (replicateM, zipWithM_)
+import Control.Monad (replicateM, zipWithM)
 import Data.Map (Map, (!))
 import qualified Data.Map as Map
 import Data.Random (RVar, RVarT, normal)
@@ -28,13 +28,14 @@ takeSamples n model params = do
   return [(freezeGraphValue (assignment !) latent, freezeGraphValue (assignment !) obs) | (latent, obs) <- samps]
 
 
-conditionedNetwork :: TypeExpr -> GraphBuilder Value GraphValue -> [FrozenGraphValue] -> GraphBuilder Value ()
+conditionedNetwork :: TypeExpr -> GraphBuilder Value GraphValue -> [FrozenGraphValue] -> GraphBuilder Value [GraphValue]
 conditionedNetwork t model condValues = do
   samps <- samplerToSamples (length condValues) model
-  let cond value (_, samp) = do
+  let cond value (latent, samp) = do
         unfrozenValue <- unfreezeGraphValue t value
         unifyGraphValues samp unfrozenValue
-  zipWithM_ cond condValues samps
+        return latent
+  zipWithM cond condValues samps
 
 type FST = (FactorGraphState Value, FactorGraphParams)
 
@@ -59,15 +60,18 @@ data ParamInferenceOptions = ParamInferenceOptions {
   optsNumEMSteps :: Int
 }
 
-inferParameters :: ParamInferenceOptions -> TypeExpr -> GraphBuilder Value GraphValue -> RVar (FactorGraphParams, [FactorGraphParams])
+inferParameters :: ParamInferenceOptions -> TypeExpr -> GraphBuilder Value GraphValue -> RVar (FactorGraphParams, [([FrozenGraphValue], FactorGraphParams)])
 inferParameters opts t model = do
   let (singleSampleTemplate, _) = runGraphBuilder model
   randParams <- randTemplateParams singleSampleTemplate
   samps <- takeSamples (optsNumSamples opts) model randParams
   trace ("samples: " ++ show samps) $ return ()
   let condNet = conditionedNetwork t model (map snd samps)
-  let (condTemplate, _) = runGraphBuilder condNet
+  let (condTemplate, latents) = runGraphBuilder condNet
   let fstGetter = sampleRVar (initFst condTemplate) >>= iterateM (optsNumEMSteps opts) (stepEM condTemplate)
   fstList <- sampleRVarTWith (\(Just x) -> return x) fstGetter
-  return (randParams, map snd fstList)
+  let assnValue assn varid = case assn ! varid of
+        KnownValue v -> v
+        NatParam np -> error ("Gibbs sampling is fuzzy? " ++ show varid ++ ", " ++ show assn)
+  return (randParams, [(map (freezeGraphValue (assnValue assn)) latents, params) | (assn, params) <- tail fstList])
 
