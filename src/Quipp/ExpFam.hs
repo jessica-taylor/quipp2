@@ -20,7 +20,7 @@ import Data.Random (RVarT, RVar, normal, gamma)
 import Data.Random.Distribution.Categorical (categorical)
 import Data.Random.Distribution.Dirichlet (dirichlet)
 import Data.Random.Distribution.Exponential (exponential)
-import Numeric.AD (AD, Mode, Scalar, grad, hessian, auto)
+import Numeric.AD (AD, Mode, Scalar, grad, hessian)
 
 import Quipp.Util
 
@@ -29,7 +29,7 @@ data ExpFam v = ExpFam {
   expFamName :: String,
   expFamD :: Int,
   expFamSufStat :: v -> [Double],
-  expFamG :: forall s. (RealFloat s, Mode s, Scalar s ~ Double) => [s] -> s,
+  expFamG :: forall s. RealFloat s => [s] -> s,
   expFamSufStatToLikelihood :: [Double] -> Likelihood v,
   expFamSample :: [Double] -> RVar v,
   expFamRandomNatParam :: RVar [Double],
@@ -97,19 +97,18 @@ vectorToParams ef ps =
       (basePart, weightsPart) = splitAt d ps
   in (basePart, splitListIntoBlocks (expFamFeaturesD ef) weightsPart)
 
-getNatParam :: (RealFloat m, Mode m, Scalar m ~ Double) => ExpFam v -> Params m -> [Double] -> [m]
+getNatParam :: RealFloat m => ExpFam v -> Params m -> [m] -> [m]
 getNatParam ef (etaBase, etaWeights) argFeatures =
-  zipWith (+) etaBase (expFamFeaturesToSufStat ef $ matMulByVector etaWeights $ map auto argFeatures)
+  zipWith (+) etaBase (expFamFeaturesToSufStat ef $ matMulByVector etaWeights argFeatures)
 
-expFamLogProbability :: (RealFloat m, Mode m, Scalar m ~ Double) => ExpFam v -> Params m -> [Double] -> [Double] -> m
-expFamLogProbability fam eta argFeatures ss = dotProduct np (map auto ss) - expFamG fam np
-  -- where np = matMulByVector eta (map auto features)
+expFamLogProbability :: RealFloat m => ExpFam v -> Params m -> [m] -> [m] -> m
+expFamLogProbability fam eta argFeatures ss = dotProduct np ss - expFamG fam np
   where np = getNatParam fam eta argFeatures
 
 expFamMLE :: ExpFam a -> [(Double, [Double], {- [[Double]], -} [Double])] -> Params Double -> [Params Double]
 expFamMLE fam samples etaStart = --trace ("\nexpFamMLE " ++ show samples) $
-  let f :: (RealFloat m, Mode m, Scalar m ~ Double) => [m] -> m
-      f eta = sum [auto weight * expFamLogProbability fam params exs ys | (weight, exs, {- varxs, -} ys) <- samples]
+  let f :: RealFloat m => [m] -> m
+      f eta = sum [fromDouble weight * expFamLogProbability fam params (map fromDouble exs) (map fromDouble ys) | (weight, exs, {- varxs, -} ys) <- samples]
         where params = vectorToParams fam eta
   in map (vectorToParams fam) $ newtonMethod (\eta -> (f eta, grad f eta, hessian f eta)) $ paramsToVector etaStart
 
@@ -171,7 +170,7 @@ expFamCrossEntropy ef p (NatParam q) = expFamG ef q - dotProduct q (expSufStat e
 -- expFamKLDivergence :: Eq v => ExpFam v -> Likelihood v -> Likelihood v -> Double
 -- expFamKLDivergence ef p q = expFamEntropy p - expFamCrossEntropy p q
 
-mkExpFam :: String -> [v -> Double] -> (forall s. (RealFloat s, Mode s, Scalar s ~ Double) => [s] -> s) -> ([Double] -> Likelihood v) -> ([Double] -> RVar v) -> RVar [Double] -> [Bool] -> ExpFam v
+mkExpFam :: String -> [v -> Double] -> (forall s. RealFloat s => [s] -> s) -> ([Double] -> Likelihood v) -> ([Double] -> RVar v) -> RVar [Double] -> [Bool] -> ExpFam v
 mkExpFam name fs g like sample np mask = ExpFam {
   expFamName = name,
   expFamD = length fs,
@@ -185,7 +184,7 @@ mkExpFam name fs g like sample np mask = ExpFam {
 
 gaussianExpFam :: ExpFam Double
 gaussianExpFam = mkExpFam "gaussian" [id, (^2)] g like sample randParam [True, False]
-  where g :: (RealFloat a, Mode a) => [a] -> a
+  where g :: RealFloat a => [a] -> a
         g [n1, n2] | n2 >= 0 = 0/0
                    | otherwise = let variance = -1 / (2 * n2)
                                      mean = n1 * variance

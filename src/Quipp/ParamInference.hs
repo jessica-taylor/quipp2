@@ -49,7 +49,7 @@ stepEM :: FactorGraphTemplate Value -> FST -> RVarT Maybe FST
 stepEM templ (state, params) = do
   let factorGraph = instantiateTemplate templ params
   newStates <- iterateM 100 (stepMH factorGraph) state
-  let params' = updateTemplateParams templ params [(1.0, s) | s <- takeEvery 10 (tail newStates)]
+  let params' = updateTemplateParams templ params [(1.0, s) | s <- takeEvery 3 (tail newStates)]
   return (last newStates, params')
 
 -- idea: start with params, take samples, do EM, see how close we got?

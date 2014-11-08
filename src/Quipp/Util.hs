@@ -1,4 +1,4 @@
-{-# LANGUAGE RankNTypes, FlexibleContexts #-}
+{-# LANGUAGE RankNTypes, FlexibleContexts, TypeFamilies #-}
 module Quipp.Util where
 
 import Control.Monad (liftM)
@@ -6,6 +6,7 @@ import Debug.Trace
 import Data.Random (RandomSource, RVarT, RVar, StdRandom(StdRandom), runRVar, runRVarT, runRVarTWith)
 import qualified Data.Packed.Matrix as Mat
 import Numeric.LinearAlgebra.Algorithms (linearSolve, pinv)
+import Numeric.AD (diff, Mode, Scalar)
 
 infixr 9 .:
 (f .: g) x y = f (g x y)
@@ -71,4 +72,22 @@ linSolve :: Matrix Double -> [Double] -> [Double]
 linSolve mat d =
   matMulByVector (Mat.toLists $ pinv $ Mat.fromLists mat) d
 
+fromDouble :: Fractional a => Double -> a
+fromDouble = fromRational . toRational
+
+{- f(x) = ax^2 + bx + c
+ - f'(x) = 2ax + b
+ - f''(x) = 2a
+ - a = f''(x) / 2
+ - b = f'(x) - 2ax
+ - c = f(x) - bx - ax^2
+ -}
+quadApproximation :: (forall a. (Mode a, RealFloat a) => a -> a) -> Double -> (Double, Double, Double)
+quadApproximation f x =
+  let deriv = diff f x
+      deriv2 = diff (diff f :: (forall a. (Mode a, RealFloat a) => a -> a)) x
+      a = deriv2 / 2
+      b = deriv - 2 * a * x
+      c = f x - b * x - a * x * x
+  in (c, b, a)
 

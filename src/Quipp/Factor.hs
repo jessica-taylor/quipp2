@@ -5,7 +5,7 @@ module Quipp.Factor (
   promoteFactor, constFactor, expFamFactor,
   VarId, RandFunId, FactorId, FactorGraph(FactorGraph, factorGraphVars, factorGraphFactors),
   FactorGraphTemplate(FactorGraphTemplate, factorGraphTemplateRandFunctions, factorGraphTemplateVars, factorGraphTemplateFactors),
-  makeFactorGraphTemplate, instantiateTemplate,
+  makeFactorGraphTemplate, instantiateTemplate, instantiateTemplateWithVariableParameters,
   FactorGraphState, initFactorGraphState, varExpSufStat, newVarLikelihood,
   factorExpLogValue,
   FactorGraphParams, randTemplateParams, updateTemplateParams,
@@ -14,13 +14,15 @@ module Quipp.Factor (
 
 import Control.Arrow ((>>>))
 import Control.Monad (liftM, replicateM)
+import Control.Monad.State.Class (get, put)
+import Control.Monad.State.Lazy (evalState)
 import Debug.Trace
 import Data.List (elemIndex)
 import Data.Map (Map, (!))
 import qualified Data.Map as Map
 import Data.Maybe (fromJust)
 import Data.Random (RVar, normal)
-import Numeric.AD (grad, auto)
+import Numeric.AD (grad)
 
 import Quipp.Value
 import Quipp.ExpFam
@@ -83,38 +85,55 @@ expFamFactor ef argExpFams eta@(etaBase, etaWeights) =
   where expSufStatAndFeatures (likelihood:argsLikelihoods) = (expSufStat ef likelihood, concat [expFamSufStatToFeatures aef (expSufStat aef l) | (l, aef) <- zip argsLikelihoods argExpFams])
         fnp 0 (_, feats) = getNatParam ef eta feats
         fnp n (ss, feats) =
-          let gradProbNp = grad (\np -> dotProduct np (map auto ss) - expFamG ef np) $ getNatParam ef eta feats
+          let gradProbNp = grad (\np -> dotProduct np (map fromDouble ss) - expFamG ef np) $ getNatParam ef eta feats
               minFeatureIndex = sum $ map expFamFeaturesD $ take (n-1) argExpFams
               thisArgDim = expFamFeaturesD (argExpFams !! (n-1))
               relevantWeights = map (take thisArgDim . drop minFeatureIndex) etaWeights
           in expFamFeaturesToSufStat (argExpFams !! (n-1)) $ matMulByVector (transpose relevantWeights) gradProbNp
 
--- expFamWithParamsFactor :: ExpFam Value -> [ExpFam Value] -> Factor Value
--- expFamWithParamsFactor ef argExpFams =
---   Factor {
---     factorExpFams = ef : (argExpFams ++ replicate (expFamD ef + expFamFeaturesD ef * sum (map expFamFeaturesD argExpFams)) gaussianValueExpFam,
---     factorLogValue = flv,
---     factorNatParam = NatParam .: fnp
---   }
---   where argSsToFeatures = concat . zipWith expFamSufStatToFeatures argExpFams
---         splitSufStats (ss:rest) =
---           let (argSs, rest') = splitAt (length argExpFams) rest
---               (etaBaseSs, etaWeightsSs) = splitAt (expFamD ef) rest'
---           in (ss, argSs, etaBaseSs, etaWeightsSs)
---         flv sss =
---           let (ss, argSs, etaBaseSs, etaWeightsSs) = splitSufStats sss
---               expEta = (map head etaBaseSs, splitListIntoBlocks (expFamFeaturesD ef) (map head etaWeightsSs))
---           in expFamLogProbability ef expEta (argSsToFeatures argSs) ss
---         fnp i sss =
---           let (ss, argSs, etaBaseSs, etaWeightsSs) = splitSufStats sss
---               expEta = (map head etaBaseSs, splitListIntoBlocks (expFamFeaturesD ef) (map head etaWeightsSs))
---           in if i == 0
---              then getNatParam ef eta $ argSsToFeatures argSs
---              else let i' = i - 1 in
---              if i' < length argExpFams
---              then grad (\afs -> getNatParam ef expEta afs) argSs
---               
---         fnp n 
+listInsertAt :: Int -> a -> [a] -> [a]
+listInsertAt i x l = take i l ++ [x] ++ drop (i+1) l
+
+paramsFromDouble :: RealFloat a => Params Double -> Params a
+paramsFromDouble (base, weights) = (map fromDouble base, map (map fromDouble) weights)
+
+expFamWithParamsFactor :: ExpFam Value -> [ExpFam Value] -> Factor Value
+expFamWithParamsFactor ef argExpFams =
+  Factor {
+    factorExpFams = ef : argExpFams ++ replicate (expFamD ef + expFamFeaturesD ef * sum (map expFamFeaturesD argExpFams)) gaussianValueExpFam,
+    factorLogValue = flv,
+    factorNatParam = NatParam .: fnp
+  }
+  where splitSufStats (xLike:rest) =
+          let (argLikes, rest') = splitAt (length argExpFams) rest
+              (etaBaseLikes, etaWeightsLikes) = splitAt (expFamD ef) rest'
+          in (expSufStat ef xLike,
+              concat [expFamSufStatToFeatures aef (expSufStat aef l) | (l, aef) <- zip argLikes argExpFams],
+              map (expSufStat gaussianValueExpFam) etaBaseLikes,
+              map (expSufStat gaussianValueExpFam) etaWeightsLikes)
+        flv likelihoods =
+          let (ss, argExpFeats, etaBaseSs, etaWeightsSs) = splitSufStats likelihoods
+              expEta = (map head etaBaseSs, splitListIntoBlocks (expFamFeaturesD ef) (map head etaWeightsSs))
+          in expFamLogProbability ef expEta argExpFeats ss
+        fnp i sss =
+          let (ss, argExpFeats, etaBaseSs, etaWeightsSs) = splitSufStats sss
+              expEta = (map head etaBaseSs, splitListIntoBlocks (expFamFeaturesD ef) (map head etaWeightsSs))
+          in if i == 0
+             then getNatParam ef expEta argExpFeats
+             else let i' = i - 1 in
+             if i' < length argExpFams
+             then grad (\afs -> expFamLogProbability ef (paramsFromDouble expEta) afs (map fromDouble ss)) argExpFeats
+             else let i'' = i' - length argExpFams in
+             if i'' < expFamD ef
+             then let f :: RealFloat a => a -> a
+                      f p = expFamLogProbability ef (listInsertAt i'' p (map fromDouble $ fst expEta), map (map fromDouble) $ snd expEta) (map fromDouble argExpFeats) (map fromDouble ss)
+                      (_, n1, n2) = quadApproximation f (fst expEta !! i'')
+                  in [n1, n2]
+             else let i''' = i'' - length (fst expEta)
+                      f :: RealFloat a => a -> a
+                      f p = expFamLogProbability ef (map fromDouble $ fst expEta, splitListIntoBlocks (expFamFeaturesD ef) (listInsertAt i''' p (map (fromDouble . head) etaWeightsSs))) (map fromDouble argExpFeats) (map fromDouble ss)
+                      (_, n1, n2) = quadApproximation f (head $ etaWeightsSs !! i''')
+                  in [n1, n2]
 
 type VarId = Int
 type FactorId = Int
@@ -150,6 +169,38 @@ instantiateTemplate templ params =
         fixFactor factorid (Right randfun, var:vars) =
           (expFamFactor (getExpFam var) (map getExpFam vars) (params ! randfun), var:vars)
         getExpFam var = fst (factorGraphTemplateVars templ ! var)
+
+instantiateTemplateWithVariableParameters :: FactorGraphTemplate Value -> FactorGraph Value
+instantiateTemplateWithVariableParameters templ =
+  let newVarId = do
+        cur <- get
+        put (cur + 1)
+        return cur
+      varIdsForParams (rfid, (ef, aefs, _)) = do
+        base <- replicateM (expFamD ef) newVarId
+        weights <- replicateM (expFamFeaturesD ef) $ replicateM (sum $ map expFamFeaturesD aefs) newVarId
+        return (rfid, (base, weights))
+      varIdsForAllParams = liftM Map.fromList $ mapM varIdsForParams $ Map.toList (factorGraphTemplateRandFunctions templ)
+      paramVarIdsMap = evalState varIdsForAllParams (1 + maximum (Map.keys (factorGraphTemplateVars templ)))
+      allParamVarIds = do
+        (base, weights) <- Map.elems paramVarIdsMap
+        base ++ concat weights
+      factorsForRandFunId rfid = [factorid | (factorid, ((Right rfid'), _)) <- Map.toList (factorGraphTemplateFactors templ), rfid == rfid']
+      fixFactor _ (Left f, vars) = (f, vars)
+      fixFactor factorid (Right rfid, var:vars) =
+        let (base, weights) = paramVarIdsMap ! rfid
+        in (expFamWithParamsFactor (getExpFam var) (map getExpFam vars), var : vars ++ base ++ concat weights)
+      getExpFam var = fst (factorGraphTemplateVars templ ! var)
+  in FactorGraph {
+       factorGraphVars = Map.fromList $ Map.toList (factorGraphTemplateVars templ) ++ do
+         (rfid, (base, weights)) <- Map.toList paramVarIdsMap
+         let factors = factorsForRandFunId rfid
+         varid <- base ++ concat weights
+         return (varid, (gaussianValueExpFam, factors)),
+       factorGraphFactors = Map.mapWithKey fixFactor (factorGraphTemplateFactors templ)
+     }
+
+
 
 
 type FactorGraphState v = Map VarId (Likelihood v)
