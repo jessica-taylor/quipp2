@@ -106,4 +106,19 @@ This is a slight problem, because the program forms a factor graph.  Factor grap
 How to implement recursive data structures?  We want mu types.  But to do this, we need to have pure eithers.  Namely, in addition to EitherGraphValue, we have PureLeftGraphValue and PureRightGraphValue.  We will also have MuGraphValue.
 
 
+-------------------------
+
+problem: gaussian nat params are not mean/precision, but rather something like
+mean*precision, precision
+Why?
+
+mean/precision comes from a normal-gamma distribution.
+What distribution should the thing come from?
+
+P(x; mu, prec) = exp(-prec*(x - mu)^2/2 + log(prec))
+               = exp(-prec*x^2/2 + prec*mu*x - prec*mu^2/2 + log(prec))
+suf stats: prec, prec*mu, log(prec), prec*mu^2
+
+P(x; n1, n2) = exp(n2*x^2 + n1*x + n1^2/(4*n2)-1/2*ln(-2*n2))
+suf stats: n2, n1, n1^2/n2, ln(n2)
 

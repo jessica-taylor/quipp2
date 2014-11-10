@@ -170,7 +170,7 @@ instantiateTemplate templ params =
           (expFamFactor (getExpFam var) (map getExpFam vars) (params ! randfun), var:vars)
         getExpFam var = fst (factorGraphTemplateVars templ ! var)
 
-instantiateTemplateWithVariableParameters :: FactorGraphTemplate Value -> FactorGraph Value
+instantiateTemplateWithVariableParameters :: FactorGraphTemplate Value -> (FactorGraph Value, Map RandFunId ([VarId], [[VarId]]))
 instantiateTemplateWithVariableParameters templ =
   let newVarId = do
         cur <- get
@@ -191,16 +191,14 @@ instantiateTemplateWithVariableParameters templ =
         let (base, weights) = paramVarIdsMap ! rfid
         in (expFamWithParamsFactor (getExpFam var) (map getExpFam vars), var : vars ++ base ++ concat weights)
       getExpFam var = fst (factorGraphTemplateVars templ ! var)
-  in FactorGraph {
+  in (FactorGraph {
        factorGraphVars = Map.fromList $ Map.toList (factorGraphTemplateVars templ) ++ do
          (rfid, (base, weights)) <- Map.toList paramVarIdsMap
          let factors = factorsForRandFunId rfid
          varid <- base ++ concat weights
          return (varid, (gaussianValueExpFam, factors)),
        factorGraphFactors = Map.mapWithKey fixFactor (factorGraphTemplateFactors templ)
-     }
-
-
+     }, paramVarIdsMap)
 
 
 type FactorGraphState v = Map VarId (Likelihood v)
@@ -266,14 +264,6 @@ notLikelihood (KnownValue (BoolValue False)) = KnownValue (BoolValue True)
 notLikelihood (KnownValue (BoolValue True)) = KnownValue (BoolValue False)
 notLikelihood (NatParam [np]) = NatParam [-np]
 
-orLikelihood :: Likelihood Value -> Likelihood Value -> Likelihood Value
-orLikelihood (KnownValue (BoolValue a)) (KnownValue (BoolValue b)) =
-  KnownValue (BoolValue (a || b))
-orLikelihood a b =
-  let [pa] = expSufStat boolValueExpFam a
-      [pb] = expSufStat boolValueExpFam b
-  in expFamSufStatToLikelihood boolValueExpFam [1 - (1 - pa) * (1 - pb)]
-
 
 notFactor :: Factor Value
 notFactor = Factor {
@@ -284,11 +274,6 @@ notFactor = Factor {
   }
   where fnp 0 [_, lx] = notLikelihood lx
         fnp 1 [ly, _] = notLikelihood ly
-
--- orFactor :: Factor Value
--- orFactor = Factor {
---     factorExpFams = [boolValueExpFam, boolValueExpFam],
---     factorLogValue = 
 
 -- logOddsToProbability x = exp (x - logSumExp [0, x])
 

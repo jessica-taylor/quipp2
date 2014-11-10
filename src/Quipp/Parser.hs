@@ -112,7 +112,19 @@ defExpr = do
   spacedString ";"
   body <- expr
   return $ DefExpr var value body
-  
+
+newTypeExpr = do
+  stringWithBreak "newtype"
+  typename <- upperId
+  params <- many lowerId
+  spacedString "="
+  t <- typeExpr
+  spacedString ";"
+  body <- expr
+  return $ NewTypeExpr (typename, params, t) body
+
+
+
 
 varPatternExpr = VarPExpr <$> lowerId
 
