@@ -266,26 +266,26 @@ expFamForType t = error $ "Can't get exponential family for type " ++ show t
 -- interpretPattern (VarPExpr var) value = return $ Just [(var, value)]
 -- interpretPattern (ConstrPExpr constr 
 
-interpretExpr :: Map String (TypeExpr -> GraphBuilder Value GraphValue) -> AnnotatedExpr -> GraphBuilder Value GraphValue
+interpretExpr :: Map String (TypeExpr -> Map String NewTypeDefinition -> GraphBuilder Value GraphValue) -> Map String NewTypeDefinition -> AnnotatedExpr -> GraphBuilder Value GraphValue
 
-interpretExpr m (typ, VarAExpr var) = case Map.lookup var m of
+interpretExpr m nts (typ, VarAExpr var) = case Map.lookup var m of
   Nothing -> error ("cannot find variable " ++ var)
-  Just val -> val typ
+  Just val -> val typ nts
 
-interpretExpr m (_, LambdaAExpr param _ body) = return $ LambdaGraphValue $
-  \arg -> interpretExpr (Map.insert param (const $ return arg) m) body
+interpretExpr m nts (_, LambdaAExpr param _ body) = return $ LambdaGraphValue $
+  \arg -> interpretExpr (Map.insert param (const2 $ return arg) m) nts body
 
-interpretExpr m (_, AppAExpr fun arg) = do
-  funVal <- interpretExpr m fun
+interpretExpr m nts (_, AppAExpr fun arg) = do
+  funVal <- interpretExpr m nts fun
   case funVal of
-    LambdaGraphValue f -> interpretExpr m arg >>= f
+    LambdaGraphValue f -> interpretExpr m nts arg >>= f
     _ -> error "Function in application expression is not actually a function"
 
-interpretExpr m (_, DefAExpr var value body) = do
-  val <- interpretExpr m value
-  interpretExpr (Map.insert var (const $ return val) m) body
+interpretExpr m nts (_, DefAExpr var value body) = do
+  val <- interpretExpr m nts value
+  interpretExpr (Map.insert var (const2 $ return val) m) nts body
 
-interpretExpr m (t, LiteralAExpr value) = do
+interpretExpr m nts (t, LiteralAExpr value) = do
   var <- newVar (expFamForType t)
   newConstFactor var value
   return $ VarGraphValue var
@@ -444,42 +444,44 @@ fmapNewtype (AppTExpr (AppTExpr (ConstTExpr "->") argtype) rettype) v f (LambdaG
   -- TODO: v should not appear in argtype
   return $ LambdaGraphValue $ \arg -> lam arg >>= fmapNewtype rettype v f
 
-defaultContext :: Map String (TypeCheck TypeExpr, TypeExpr -> GraphBuilder Value GraphValue)
+const2 = const . const
+
+defaultContext :: Map String (TypeCheck TypeExpr, TypeExpr -> Map String NewTypeDefinition -> GraphBuilder Value GraphValue)
 defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b, c))) [
   -- unify :: a -> a -> a
   -- conditions on its arguments being equal, returning one of them
   ("unify",
    do a <- newVarType "unify_type"
       return $ functionType a $ functionType a a,
-   const $ return $ LambdaGraphValue $ \v1 ->
+   const2 $ return $ LambdaGraphValue $ \v1 ->
      return $ LambdaGraphValue $ \v2 -> unifyGraphValues v1 v2),
-  ("unit", return (ConstTExpr "Unit"), const $ return UnitGraphValue),
+  ("unit", return (ConstTExpr "Unit"), const2 $ return UnitGraphValue),
   ("fst",
    do a <- newVarType "pair_fst"
       b <- newVarType "pair_snd"
       return $ functionType (pairType a b) a,
-   const $ return $ LambdaGraphValue $ \(PairGraphValue first _) -> return first),
+   const2 $ return $ LambdaGraphValue $ \(PairGraphValue first _) -> return first),
   ("snd",
    do a <- newVarType "pair_fst"
       b <- newVarType "pair_snd"
       return $ functionType (pairType a b) b,
-   const $ return $ LambdaGraphValue $ \(PairGraphValue _ second) -> return second),
+   const2 $ return $ LambdaGraphValue $ \(PairGraphValue _ second) -> return second),
   ("pair",
    do a <- newVarType "pair_fst"
       b <- newVarType "pair_snd"
       return $ functionType a $ functionType b $ pairType a b,
-   const $ return $ LambdaGraphValue $ \first -> return $ LambdaGraphValue $
+   const2 $ return $ LambdaGraphValue $ \first -> return $ LambdaGraphValue $
      \second -> return $ PairGraphValue first second),
   ("left",
    do a <- newVarType "either_left"
       b <- newVarType "either_right"
       return $ functionType a $ eitherType a b,
-   const $ return $ LambdaGraphValue $ \value -> return $ PureLeftGraphValue value),
+   const2 $ return $ LambdaGraphValue $ \value -> return $ PureLeftGraphValue value),
   ("right",
    do a <- newVarType "either_left"
       b <- newVarType "either_right"
       return $ functionType b $ eitherType a b,
-   const $ return $ LambdaGraphValue $ \value -> return $ PureRightGraphValue value),
+   const2 $ return $ LambdaGraphValue $ \value -> return $ PureRightGraphValue value),
   ("either",
    do a <- newVarType "either_left"
       b <- newVarType "either_right"
@@ -490,7 +492,7 @@ defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b, c))) [
          leftResult <- leftHandler leftVal
          rightResult <- rightHandler rightVal
          ifThenElse isRightVar leftResult rightResult
-   in const $ return $ LambdaGraphValue $ \eitherValue ->
+   in const2 $ return $ LambdaGraphValue $ \eitherValue ->
      return $ LambdaGraphValue $ \(LambdaGraphValue leftHandler) ->
        return $ LambdaGraphValue $ \(LambdaGraphValue rightHandler) ->
          getResult eitherValue leftHandler rightHandler
@@ -499,12 +501,15 @@ defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b, c))) [
   ("mu",
    do f <- newVarType "mu_f"
       return $ functionType (AppTExpr f (muType f)) (muType f),
-   const $ return $ LambdaGraphValue return
+   \(AppTExpr (AppTExpr (ConstTExpr "->") (AppTExpr (ConstTExpr functorName) _)) _) ->
+   \nts -> case Map.lookup functorName nts of
+             Nothing -> error ("No newtype " ++ functorName)
+             Just def -> return $ LambdaGraphValue (return . MuGraphValue def)
   ),
   ("unMu",
    do f <- newVarType "unMu_f"
       return $ functionType (muType f) (AppTExpr f (muType f)),
-   const $ return $ LambdaGraphValue return
+   const2 $ return $ LambdaGraphValue $ \(MuGraphValue _ v) -> return v
   ),
   -- cata :: Functor f => (f a -> a) -> Mu f -> a
   -- cata f = f . fmap (cata f) . unMu
@@ -512,7 +517,7 @@ defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b, c))) [
    do f <- newVarType "cata_f"
       a <- newVarType "cata_a"
       return $ functionType (functionType (AppTExpr f a) a) $ functionType (muType f) a,
-   const $ return $ LambdaGraphValue $ \(LambdaGraphValue cataFun) ->
+   const2 $ return $ LambdaGraphValue $ \(LambdaGraphValue cataFun) ->
      return $ LambdaGraphValue $ fix $ \doCata -> \(MuGraphValue (typeName, typeParams, typeBody) innerValue) -> do
        fmapped <- fmapNewtype typeBody (last typeParams) doCata innerValue
        cataFun fmapped
@@ -520,20 +525,20 @@ defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b, c))) [
   -- TODO bayes net!
   ("uniformBool",
    return $ functionType (ConstTExpr "Unit") (ConstTExpr "Bool"),
-   const $ return $ LambdaGraphValue $ \_ -> do
+   const2 $ return $ LambdaGraphValue $ \_ -> do
      v <- newVar boolValueExpFam
      newFactor (expFamFactor boolValueExpFam [] ([0.0], [[]])) [v]
      return $ VarGraphValue v),
   ("standardNormal",
    return $ functionType (ConstTExpr "Unit") (ConstTExpr "Double"),
-   const $ return $ LambdaGraphValue $ \_ -> do
+   const2 $ return $ LambdaGraphValue $ \_ -> do
      v <- newVar gaussianValueExpFam
      newFactor (expFamFactor gaussianValueExpFam [] ([0.0, -0.5], [[]])) [v]
      return $ VarGraphValue v),
-  ("true", return (ConstTExpr "Bool"), const $ liftM VarGraphValue $ constValue boolValueExpFam $ BoolValue True),
-  ("false", return (ConstTExpr "Bool"), const $ liftM VarGraphValue $ constValue boolValueExpFam $ BoolValue False),
+  ("true", return (ConstTExpr "Bool"), const2 $ liftM VarGraphValue $ constValue boolValueExpFam $ BoolValue True),
+  ("false", return (ConstTExpr "Bool"), const2 $ liftM VarGraphValue $ constValue boolValueExpFam $ BoolValue False),
   ("randFunction", return (functionType (ConstTExpr "Unit") $ functionType (VarTExpr "a") $ VarTExpr "b"),
-   \(AppTExpr (AppTExpr (ConstTExpr "->") (ConstTExpr "Unit")) (AppTExpr (AppTExpr (ConstTExpr "->") argType) resType)) ->
+   \(AppTExpr (AppTExpr (ConstTExpr "->") (ConstTExpr "Unit")) (AppTExpr (AppTExpr (ConstTExpr "->") argType) resType)) _ ->
      return $ LambdaGraphValue $ \UnitGraphValue -> do
        let argExpFams = typeToExpFams argType
            resExpFams = typeToExpFams resType
@@ -542,7 +547,7 @@ defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b, c))) [
          let argVars = graphValueEmbeddedVars argValue
          resVars <- mapM (flip newSampleFromRandFun argVars) rfs
          return $ varsToGraphValue resType resVars),
-  ("boolToDoubleFun", return (functionType (ConstTExpr "Unit") $ functionType (ConstTExpr "Bool") (ConstTExpr "Double")), const $ return $ LambdaGraphValue $ \_ -> do
+  ("boolToDoubleFun", return (functionType (ConstTExpr "Unit") $ functionType (ConstTExpr "Bool") (ConstTExpr "Double")), const2 $ return $ LambdaGraphValue $ \_ -> do
     rf <- newRandFun gaussianValueExpFam [boolValueExpFam]
     return $ LambdaGraphValue $ \(VarGraphValue boolvar) -> liftM VarGraphValue $ newSampleFromRandFun rf [boolvar])
   ]
