@@ -48,8 +48,8 @@ initFst templ = do
 stepEM :: FactorGraphTemplate Value -> FST -> RVarT Maybe FST
 stepEM templ (state, params) = do
   let factorGraph = instantiateTemplate templ params
-  newStates <- iterateM 100 (stepMH factorGraph) state
-  let params' = updateTemplateParams templ params [(1.0, s) | s <- takeEvery 5 (tail newStates)]
+  newStates <- iterateM 10 (stepMH factorGraph) state
+  let params' = updateTemplateParams templ params [(1.0, s) | s <- takeEvery 1 (tail newStates)]
   return (last newStates, params')
 
 -- idea: start with params, take samples, do EM, see how close we got?
@@ -63,6 +63,7 @@ data ParamInferenceOptions = ParamInferenceOptions {
 inferParameters :: ParamInferenceOptions -> TypeExpr -> GraphBuilder Value GraphValue -> RVar (FactorGraphParams, [FrozenGraphValue], [FrozenGraphValue], [([FrozenGraphValue], FactorGraphParams)])
 inferParameters opts t model = do
   let (singleSampleTemplate, _) = runGraphBuilder model
+  traceShow singleSampleTemplate $ return ()
   randParams <- randTemplateParams singleSampleTemplate
   samps <- takeSamples (optsNumSamples opts) model randParams
   -- trace ("samples: " ++ show samps) $ return ()

@@ -8,6 +8,8 @@ import Data.Map (Map)
 import qualified Data.Map as Map
 import Control.Applicative ((<$>), (<*>))
 import Control.Monad (liftM, zipWithM, forM)
+import Control.Monad.Reader (ReaderT, runReaderT)
+import Control.Monad.Reader.Class (ask, local)
 import Control.Monad.State (get, put)
 import Control.Monad.State.Lazy (State, runState, StateT, runStateT)
 import Control.Monad.Trans (lift)
@@ -17,7 +19,15 @@ import Quipp.Factor
 import Quipp.GraphBuilder
 import Quipp.Value
 
-data TypeExpr = VarTExpr String | ConstTExpr String | AppTExpr TypeExpr TypeExpr deriving (Eq, Ord, Show)
+data TypeExpr = VarTExpr String | ConstTExpr String | AppTExpr TypeExpr TypeExpr deriving (Eq, Ord)
+
+instance Show TypeExpr where
+  show (VarTExpr v) = v
+  show (ConstTExpr s) = s
+  show (AppTExpr (AppTExpr (ConstTExpr "->") a) r) =
+    "(" ++ show a ++ " -> " ++ show r ++ ")"
+  show (AppTExpr a b) =
+    "(" ++ show a ++ " " ++ show b ++ ")"
 
 data AdtDefinition = AdtDefinition String [String] [(String, [TypeExpr])] deriving (Eq, Ord, Show)
 
@@ -38,7 +48,7 @@ type TypeId = Int
 
 type HindleyMilnerState = (Map String TypeExpr, TypeId)
 
-type TypeCheck = StateT HindleyMilnerState (Either String)
+type TypeCheck = ReaderT [String] (StateT HindleyMilnerState (Either String))
 
 functionType a b = AppTExpr (AppTExpr (ConstTExpr "->") a) b
 pairType a b = AppTExpr (AppTExpr (ConstTExpr "Pair") a) b
@@ -47,15 +57,23 @@ muType f = AppTExpr (ConstTExpr "Mu") f
 
 newTypeId :: String -> TypeCheck String
 newTypeId str = do
-  (m, tid) <- get
-  put (m, tid + 1)
+  (m, tid) <- lift get
+  lift $ put (m, tid + 1)
   return ("_" ++ str ++ "_" ++ show tid)
+
+typeError :: String -> TypeCheck a
+typeError s = do
+  stack <- ask 
+  lift $ lift $ Left $ "At\n" ++ (reverse stack >>= (++ "\n\n")) ++ ": " ++ s
+
+pushTypeCheckStack :: String -> TypeCheck a -> TypeCheck a
+pushTypeCheckStack s = local (s:)
 
 newVarType = liftM VarTExpr . newTypeId
 
 reduceTypeShallow :: TypeExpr -> TypeCheck TypeExpr
 reduceTypeShallow t@(VarTExpr v) = do
-  (m, _) <- get
+  (m, _) <- lift get
   case Map.lookup v m of
     Nothing -> return t
     Just t' -> reduceTypeShallow t'
@@ -81,12 +99,25 @@ reduceTypesInAnnotatedExpr (t, abody) = do
     other -> return other
   return (t', abody')
 
+varOccursInReduced :: String -> TypeExpr -> TypeCheck Bool
+varOccursInReduced v (VarTExpr v') = return $ v == v'
+varOccursInReduced v (AppTExpr a b) = do 
+  aocc <- varOccursIn v a
+  if aocc then return True else varOccursIn v b
+varOccursInReduced v other = return False
+
+varOccursIn v x = reduceTypeShallow x >>= varOccursInReduced v
 
 unifyReduced :: TypeExpr -> TypeExpr -> TypeCheck ()
 
-unifyReduced (VarTExpr v) other = do
-  (m, count) <- get
-  put (Map.insert v other m, count)
+unifyReduced (VarTExpr v) other
+  | VarTExpr v == other = return ()
+  | otherwise = do
+    occurs <- varOccursIn v other
+    if occurs && other /= VarTExpr v then typeError ("Occurs check failed: " ++ v ++ " unified with " ++ show other)
+    else do
+      (m, count) <- lift get
+      lift $ put (Map.insert v other m, count)
 
 unifyReduced other t@(VarTExpr v) = unifyReduced t other
 
@@ -96,14 +127,16 @@ unifyReduced (AppTExpr a b) (AppTExpr c d) = do
   unify a c
   unify b d
 
-unifyReduced a b = lift (Left $ "Unification failed: " ++ show a ++ ", " ++ show b)
+unifyReduced a b = typeError $ "Unification failed: " ++ show a ++ ", " ++ show b
 
 unify :: TypeExpr -> TypeExpr -> TypeCheck ()
 
 unify a b = do
-  a' <- reduceTypeShallow a
-  b' <- reduceTypeShallow b
-  unifyReduced a' b'
+  -- a' <- reduceTypeShallow a
+  -- b' <- reduceTypeShallow b
+  a' <- reduceTypeDeep a
+  b' <- reduceTypeDeep b
+  pushTypeCheckStack ("unify " ++ show a' ++ ", " ++ show b') $ unifyReduced a' b'
 
 
 cloneWithNewVarsReduced :: Map String String -> TypeExpr -> TypeCheck (TypeExpr, Map String String)
@@ -158,49 +191,56 @@ splitFunctionType other = ([], other)
 
 hindleyMilner :: HindleyMilnerContext -> Expr -> TypeCheck AnnotatedExpr
 
-hindleyMilner (vars, _) (VarExpr v) = case Map.lookup v vars of
-  Nothing -> lift (Left $ "Unknown variable " ++ v)
+-- hindleyMilner _ x | traceShow x False = undefined
+hindleyMilner ctx x = pushTypeCheckStack ("hindleyMilner " ++ show x) $ hindleyMilner' ctx x
+
+hindleyMilner' :: HindleyMilnerContext -> Expr -> TypeCheck AnnotatedExpr
+
+hindleyMilner' (vars, _) (VarExpr v) = case Map.lookup v vars of
+  Nothing -> typeError $ "Unknown variable "
   Just getT -> do
     t <- getT
     return (t, VarAExpr v)
 
-hindleyMilner ctx (WithTypeExpr expr typ) = do
+hindleyMilner' ctx (WithTypeExpr expr typ) = do
   aexpr@(exprType, _) <- hindleyMilner ctx expr
   unify exprType typ
   return aexpr
 
-hindleyMilner (varctx, typectx) (LambdaExpr var body) = do
+hindleyMilner' (varctx, typectx) (LambdaExpr var body) = do
   argType <- newVarType "lambda_arg"
   bodyAExpr@(bodyType, _) <- hindleyMilner (Map.insert var (return argType) varctx, typectx) body
   return (functionType argType bodyType, LambdaAExpr var argType bodyAExpr)
 
-hindleyMilner ctx (AppExpr fun arg) = do
+hindleyMilner' ctx (AppExpr fun arg) = do
   funAExpr@(funType, _) <- hindleyMilner ctx fun
   argAExpr@(argType, _) <- hindleyMilner ctx arg
+  argType' <- reduceTypeDeep argType
+  trace ("###" ++ show arg ++ " :: " ++ show argType) $ return ()
   resultType <- newVarType "app_result"
   unify funType (functionType argType resultType)
   return (resultType, AppAExpr funAExpr argAExpr)
 
-hindleyMilner ctx@(varctx, typectx) (DefExpr var value body) = do
+hindleyMilner' ctx@(varctx, typectx) (DefExpr var value body) = do
   valueAExpr@(valueType, _) <- hindleyMilner ctx value
   bodyAExpr@(bodyType, _) <- hindleyMilner (Map.insert var (cloneWithNewVars valueType) varctx, typectx) body
   return (bodyType, DefAExpr var valueAExpr bodyAExpr)
 
-hindleyMilner ctx (LiteralExpr lit) =
+hindleyMilner' ctx (LiteralExpr lit) =
   let t = case lit of
             DoubleValue _ -> "Double"
             BoolValue _ -> "Bool"
   in return (ConstTExpr t, LiteralAExpr lit)
 
-hindleyMilner (varctx, typectx) (NewTypeExpr (typeName, typeArgs, innerType) body) =
+hindleyMilner' (varctx, typectx) (NewTypeExpr (typeName, typeArgs, innerType) body) =
   -- TODO: must be functor?
   let wrappedType = foldl AppTExpr (ConstTExpr typeName) (map VarTExpr typeArgs)
       varctx' = Map.insert typeName (cloneWithNewVars $ functionType innerType wrappedType) varctx
       varctx'' = Map.insert ("un" ++ typeName) (cloneWithNewVars $ functionType wrappedType innerType) varctx'
-  in hindleyMilner (varctx', typectx) body
+  in hindleyMilner (varctx'', typectx) body
 
 typeInfer :: HindleyMilnerContext -> Expr -> Either String AnnotatedExpr
-typeInfer ctx expr = case runStateT (hindleyMilner ctx expr >>= reduceTypesInAnnotatedExpr) (Map.empty, 0) of
+typeInfer ctx expr = case runStateT (runReaderT (hindleyMilner ctx expr >>= reduceTypesInAnnotatedExpr) []) (Map.empty, 0) of
   Left err -> Left err
   Right (ex, state) -> Right ex
 
@@ -447,7 +487,7 @@ fmapNewtype (AppTExpr (AppTExpr (ConstTExpr "->") argtype) rettype) v f (LambdaG
 const2 = const . const
 
 defaultContext :: Map String (TypeCheck TypeExpr, TypeExpr -> Map String NewTypeDefinition -> GraphBuilder Value GraphValue)
-defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b, c))) [
+defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b >>= cloneWithNewVars, c))) [
   -- unify :: a -> a -> a
   -- conditions on its arguments being equal, returning one of them
   ("unify",
