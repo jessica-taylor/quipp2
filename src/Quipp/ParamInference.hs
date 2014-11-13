@@ -45,10 +45,10 @@ initFst templ = do
   return (initFactorGraphState (instantiateTemplate templ params), params)
 
 
-stepEM :: FactorGraphTemplate Value -> FST -> RVarT Maybe FST
+stepEM :: FactorGraphTemplate Value -> FST -> RVar FST
 stepEM templ (state, params) = do
   let factorGraph = instantiateTemplate templ params
-  newStates <- iterateM 100 (stepMH factorGraph) state
+  newStates <- sampleRVarTWith (\(Just x) -> return x) $ iterateM 100 (stepMH factorGraph) state
   let params' = updateTemplateParams templ params [(1.0, s) | s <- takeEvery 3 (tail newStates)]
   return (last newStates, params')
 
@@ -56,8 +56,7 @@ stepEM templ (state, params) = do
 
 
 data ParamInferenceOptions = ParamInferenceOptions {
-  optsNumSamples :: Int,
-  optsNumEMSteps :: Int
+  optsNumSamples :: Int
 }
 
 inferParameters :: ParamInferenceOptions -> TypeExpr -> GraphBuilder Value GraphValue -> RVar (FactorGraphParams, [FrozenGraphValue], [FrozenGraphValue], [([FrozenGraphValue], FactorGraphParams)])
@@ -69,8 +68,7 @@ inferParameters opts t model = do
   -- trace ("samples: " ++ show samps) $ return ()
   let condNet = conditionedNetwork t model (map snd samps)
   let (condTemplate, latents) = runGraphBuilder condNet
-  let fstGetter = sampleRVar (initFst condTemplate) >>= iterateM (optsNumEMSteps opts) (stepEM condTemplate)
-  fstList <- sampleRVarTWith (\(Just x) -> return x) fstGetter
+  fstList <- sampleRVar (initFst condTemplate) >>= iterateRVar (stepEM condTemplate)
   let assnValue assn varid = case assn ! varid of
         KnownValue v -> v
         NatParam np -> error ("Gibbs sampling is fuzzy? " ++ show varid ++ ", " ++ show assn)

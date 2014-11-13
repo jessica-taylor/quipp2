@@ -2,11 +2,13 @@
 module Quipp.Util where
 
 import Control.Monad (liftM)
+import Control.Monad.State.Lazy (runState)
 import Debug.Trace
-import Data.Random (RandomSource, RVarT, RVar, StdRandom(StdRandom), runRVar, runRVarT, runRVarTWith)
+import Data.Random (RandomSource, RVarT, RVar, StdRandom(StdRandom), runRVar, runRVarT, runRVarTWith, stdUniform)
 import qualified Data.Packed.Matrix as Mat
 import Numeric.LinearAlgebra.Algorithms (linearSolve, pinv)
 import Numeric.AD (diff, Mode, Scalar)
+import System.Random (StdGen, mkStdGen)
 
 infixr 9 .:
 (f .: g) x y = f (g x y)
@@ -32,6 +34,16 @@ negInfinity = read "-Infinity"
 iterateM :: Monad m => Int -> (a -> m a) -> a -> m [a]
 iterateM 0 _ x = return [x]
 iterateM n f x = liftM (x:) (f x >>= iterateM (n-1) f)
+
+stateInfList :: (s -> (a, s)) -> s -> [a]
+stateInfList f s =
+  let (a, s') = f s in a : stateInfList f s'
+
+iterateRVar :: (a -> RVar a) -> a -> RVar [a]
+iterateRVar f x = do
+  seed <- stdUniform
+  return $ stateInfList (\(y, gen) -> let (y', gen') = runState (sampleRVar (f y)) gen in (y', (y', gen'))) (x, mkStdGen seed)
+
 
 logSumExp :: RealFloat a => [a] -> a
 logSumExp lps = mx + log (sum [exp (lp - mx) | lp <- lps])
