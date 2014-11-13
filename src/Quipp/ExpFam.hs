@@ -213,7 +213,7 @@ categoricalExpFam n = mkExpFam ("categorical " ++ show n) (map ss [1 .. n-1]) g 
         sample :: [Double] -> RVar Int
         sample ns = categorical $ zip (logProbsToProbs (0:ns)) [0..]
         randParam = do
-          (p0:probs) <- dirichlet (replicate n 0)
+          (p0:probs) <- dirichlet (replicate n 1)
           return $ map (\p -> log p - log p0) probs
 
 

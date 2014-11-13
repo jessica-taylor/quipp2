@@ -1,6 +1,7 @@
 
 module Quipp.GraphBuilder where
 
+import Debug.Trace
 import Control.Monad.State (get, put)
 import Control.Monad.State.Lazy (State, runState)
 import Data.Maybe (fromJust)
@@ -21,7 +22,7 @@ data GraphBuilderState v = GraphBuilderState {
   gbsNextRandFunId :: RandFunId,
   gbsNextFactorId :: FactorId,
   gbsVarReplacements :: Map VarId VarId
-}
+} deriving Show
 
 type GraphBuilder v = State (GraphBuilderState v)
 

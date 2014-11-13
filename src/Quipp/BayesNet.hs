@@ -40,7 +40,6 @@ sampleBayesNet graph =
             (factor, varids) = factorGraphFactors graph ! factorid
             likelihood = factorNatParam factor (fromJust $ elemIndex varid varids) $ map (KnownValue . (state !)) varids
         in do
-          traceShow ef $ return ()
           samp <- sampleLikelihood ef likelihood
           return $ Map.insert varid samp state
   in foldlM sampleNextVar Map.empty varidsInOrder

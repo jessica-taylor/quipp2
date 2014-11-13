@@ -188,6 +188,9 @@ splitFunctionType other = ([], other)
 --         substs <- zipWithM (hindleyMilnerPattern ctx) fields argTypes
 --         return $ concat substs
 
+simpleValueType :: Value -> TypeExpr
+simpleValueType (DoubleValue _) = ConstTExpr "Double"
+simpleValueType (BoolValue _) = ConstTExpr "Bool"
 
 hindleyMilner :: HindleyMilnerContext -> Expr -> TypeCheck AnnotatedExpr
 
@@ -216,7 +219,6 @@ hindleyMilner' ctx (AppExpr fun arg) = do
   funAExpr@(funType, _) <- hindleyMilner ctx fun
   argAExpr@(argType, _) <- hindleyMilner ctx arg
   argType' <- reduceTypeDeep argType
-  trace ("###" ++ show arg ++ " :: " ++ show argType) $ return ()
   resultType <- newVarType "app_result"
   unify funType (functionType argType resultType)
   return (resultType, AppAExpr funAExpr argAExpr)
@@ -226,11 +228,7 @@ hindleyMilner' ctx@(varctx, typectx) (DefExpr var value body) = do
   bodyAExpr@(bodyType, _) <- hindleyMilner (Map.insert var (cloneWithNewVars valueType) varctx, typectx) body
   return (bodyType, DefAExpr var valueAExpr bodyAExpr)
 
-hindleyMilner' ctx (LiteralExpr lit) =
-  let t = case lit of
-            DoubleValue _ -> "Double"
-            BoolValue _ -> "Bool"
-  in return (ConstTExpr t, LiteralAExpr lit)
+hindleyMilner' ctx (LiteralExpr lit) = return (simpleValueType lit, LiteralAExpr lit)
 
 hindleyMilner' (varctx, typectx) (NewTypeExpr (typeName, typeArgs, innerType) body) =
   -- TODO: must be functor?
@@ -282,20 +280,33 @@ freezeGraphValue f (PureRightGraphValue r) = FRightGraphValue (freezeGraphValue 
 freezeGraphValue f (MuGraphValue def v) = FMuGraphValue def (freezeGraphValue f v)
 freezeGraphValue _ other = error "Cannot freeze lambdas"
 
-unfreezeGraphValue :: TypeExpr -> FrozenGraphValue -> GraphBuilder Value GraphValue
-unfreezeGraphValue _ FUnitGraphValue = return UnitGraphValue
-unfreezeGraphValue t (FValueGraphValue value) = VarGraphValue <$> constValue (expFamForType t) value
-unfreezeGraphValue (AppTExpr (AppTExpr (ConstTExpr "Pair") firstType) secondType) (FPairGraphValue a b) =
-  PairGraphValue <$> unfreezeGraphValue firstType a <*> unfreezeGraphValue secondType b
-unfreezeGraphValue
-  (AppTExpr (AppTExpr (ConstTExpr "Either") leftType) rightType)
-  (FLeftGraphValue value) = PureLeftGraphValue <$> unfreezeGraphValue leftType value
-unfreezeGraphValue
-  (AppTExpr (AppTExpr (ConstTExpr "Either") leftType) rightType)
-  (FRightGraphValue value) = PureRightGraphValue <$> unfreezeGraphValue rightType value
-unfreezeGraphValue (AppTExpr (ConstTExpr "Mu") functorType) (FMuGraphValue def v) =
-  MuGraphValue def <$> unfreezeGraphValue (AppTExpr functorType (muType functorType)) v
-unfreezeGraphValue t other = error ("Cannot freeze " ++ show other ++ " : " ++ show t)
+-- unfreezeGraphValue :: TypeExpr -> FrozenGraphValue -> GraphBuilder Value GraphValue
+-- unfreezeGraphValue _ FUnitGraphValue = return UnitGraphValue
+-- unfreezeGraphValue t (FValueGraphValue value) = 
+--   trace ("t " ++ show t ++ " value " ++ show value) $ VarGraphValue <$> constValue (expFamForType t) value
+-- unfreezeGraphValue (AppTExpr (AppTExpr (ConstTExpr "Pair") firstType) secondType) (FPairGraphValue a b) =
+--   trace ("pair " ++ show firstType ++ ";" ++ show secondType ++ "#" ++ show a ++ ";" ++ show b)
+--   PairGraphValue <$> unfreezeGraphValue firstType a <*> unfreezeGraphValue secondType b
+-- unfreezeGraphValue
+--   (AppTExpr (AppTExpr (ConstTExpr "Either") leftType) rightType)
+--   (FLeftGraphValue value) = PureLeftGraphValue <$> unfreezeGraphValue leftType value
+-- unfreezeGraphValue
+--   (AppTExpr (AppTExpr (ConstTExpr "Either") leftType) rightType)
+--   (FRightGraphValue value) = PureRightGraphValue <$> unfreezeGraphValue rightType value
+-- unfreezeGraphValue (AppTExpr (ConstTExpr "Mu") functorType) (FMuGraphValue def v) =
+--   MuGraphValue def <$> unfreezeGraphValue (AppTExpr functorType (muType functorType)) v
+-- unfreezeGraphValue t other = error ("Cannot freeze " ++ show other ++ " : " ++ show t)
+
+unfreezeGraphValue :: FrozenGraphValue -> GraphBuilder Value GraphValue
+unfreezeGraphValue FUnitGraphValue = return UnitGraphValue
+unfreezeGraphValue (FValueGraphValue value) =
+  VarGraphValue <$> constValue (expFamForType (simpleValueType value)) value
+unfreezeGraphValue (FPairGraphValue a b) =
+  PairGraphValue <$> unfreezeGraphValue a <*> unfreezeGraphValue b
+unfreezeGraphValue (FLeftGraphValue value) = PureLeftGraphValue <$> unfreezeGraphValue value
+unfreezeGraphValue (FRightGraphValue value) = PureRightGraphValue <$> unfreezeGraphValue value
+unfreezeGraphValue (FMuGraphValue def v) = MuGraphValue def <$> unfreezeGraphValue  v
+unfreezeGraphValue other = error ("Cannot freeze " ++ show other)
 
 expFamForType :: TypeExpr -> ExpFam Value
 expFamForType (ConstTExpr "Double") = gaussianValueExpFam
@@ -307,6 +318,8 @@ expFamForType t = error $ "Can't get exponential family for type " ++ show t
 -- interpretPattern (ConstrPExpr constr 
 
 interpretExpr :: Map String (TypeExpr -> Map String NewTypeDefinition -> GraphBuilder Value GraphValue) -> Map String NewTypeDefinition -> AnnotatedExpr -> GraphBuilder Value GraphValue
+
+-- interpretExpr _ _ x | trace ("interpret " ++ show x) False = undefined
 
 interpretExpr m nts (typ, VarAExpr var) = case Map.lookup var m of
   Nothing -> error ("cannot find variable " ++ var)

@@ -32,7 +32,7 @@ conditionedNetwork :: TypeExpr -> GraphBuilder Value GraphValue -> [FrozenGraphV
 conditionedNetwork t model condValues = do
   samps <- samplerToSamples (length condValues) model
   let cond value (latent, samp) = do
-        unfrozenValue <- unfreezeGraphValue t value
+        unfrozenValue <- unfreezeGraphValue value
         unifyGraphValues samp unfrozenValue
         return latent
   zipWithM cond condValues samps
@@ -48,8 +48,8 @@ initFst templ = do
 stepEM :: FactorGraphTemplate Value -> FST -> RVarT Maybe FST
 stepEM templ (state, params) = do
   let factorGraph = instantiateTemplate templ params
-  newStates <- iterateM 10 (stepMH factorGraph) state
-  let params' = updateTemplateParams templ params [(1.0, s) | s <- takeEvery 1 (tail newStates)]
+  newStates <- iterateM 100 (stepMH factorGraph) state
+  let params' = updateTemplateParams templ params [(1.0, s) | s <- takeEvery 3 (tail newStates)]
   return (last newStates, params')
 
 -- idea: start with params, take samples, do EM, see how close we got?

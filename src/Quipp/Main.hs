@@ -35,7 +35,7 @@ main = do
   print resultExpr
   print typed
   let (AppTExpr (AppTExpr (ConstTExpr "->") _) t) = fst typed
-  (actualParams, actualLatents, samples, iters) <- sampleRVar $ inferParameters (ParamInferenceOptions {optsNumSamples = 5, optsNumEMSteps = 5}) t builder
+  (actualParams, actualLatents, samples, iters) <- sampleRVar $ inferParameters (ParamInferenceOptions {optsNumSamples = 20, optsNumEMSteps = 3}) t builder
   putStrLn $ "ACTUAL PARAMS: " ++ show actualParams
   putStrLn $ "ACTUAL LATENTS: " ++ show actualLatents
   putStrLn $ "SAMPLES: " ++ show samples
