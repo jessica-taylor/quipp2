@@ -1,0 +1,9 @@
+let initState = uniformBool;
+let trans = randFunction unit;
+let obs = randFunction unit;
+\un ->
+let x1 = (initState unit : Bool);
+let x2 = (trans x1 : Bool);
+let x3 = trans x2;
+let x4 = trans x3;
+pair (pair x1 (pair x2 (pair x3 x4))) (pair (obs x1 : Bool) (pair (obs x2) (pair (obs x3) (obs x4))))
