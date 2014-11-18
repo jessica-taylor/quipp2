@@ -105,8 +105,26 @@ expFamLogProbability :: RealFloat m => ExpFam v -> Params m -> [m] -> [m] -> m
 expFamLogProbability fam eta argFeatures ss = dotProduct np ss - expFamG fam np
   where np = getNatParam fam eta argFeatures
 
+-- Special case for Gaussian (linear regression).  I have confirmed that
+-- this is equivalent.  Note that this does not work for VMP or for
+-- samples with weight not equal to 1.
 expFamMLE :: ExpFam a -> [(Double, [Double], {- [[Double]], -} [Double])] -> Params Double -> [Params Double]
-expFamMLE fam samples etaStart = --trace ("\nexpFamMLE " ++ show samples) $
+expFamMLE fam samples etaStart | expFamName fam == "gaussian" =
+  let xs = [x | (_, [x], _) <- samples]
+      ys = [y | (_, _, [y, _]) <- samples]
+      xmean = mean xs
+      ymean = mean ys
+      xvar = variance xs
+      yvar = variance ys
+      covar = covariance (zip xs ys)
+      slope = covar / xvar
+      yint = ymean - slope * xmean
+      r2 = covar^2 / (xvar * yvar)
+      residVar = (1 - r2) * yvar
+  in trace ("xmean " ++ show xmean ++ " r2 " ++ show r2) $
+    repeat $ if isNaN covar then etaStart else ([yint / residVar, -1 / (2 * residVar)], [[slope / residVar]])
+
+expFamMLE fam samples etaStart = -- trace ("\nexpFamMLE " ++ show samples) $
   let f :: RealFloat m => [m] -> m
       f eta = sum [fromDouble weight * expFamLogProbability fam params (map fromDouble exs) (map fromDouble ys) | (weight, exs, {- varxs, -} ys) <- samples]
         where params = vectorToParams fam eta

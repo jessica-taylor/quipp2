@@ -29,20 +29,15 @@ instance Show TypeExpr where
   show (AppTExpr a b) =
     "(" ++ show a ++ " " ++ show b ++ ")"
 
-data AdtDefinition = AdtDefinition String [String] [(String, [TypeExpr])] deriving (Eq, Ord, Show)
-
-data PatternExpr = VarPExpr String | ConstrPExpr String [PatternExpr] deriving (Eq, Ord, Show)
-
-
 type NewTypeDefinition = (String, [String], TypeExpr)
 
 -- Expressions annotated by type.
-data AnnotatedExprBody = VarAExpr String | LambdaAExpr String TypeExpr AnnotatedExpr | AppAExpr AnnotatedExpr AnnotatedExpr | DefAExpr String AnnotatedExpr AnnotatedExpr | LiteralAExpr Value | AdtAExpr AdtDefinition AnnotatedExpr | CaseAExpr AnnotatedExpr [(PatternExpr, AnnotatedExpr)] deriving (Eq, Ord, Show)
+data AnnotatedExprBody = VarAExpr String | LambdaAExpr String TypeExpr AnnotatedExpr | AppAExpr AnnotatedExpr AnnotatedExpr | DefAExpr String AnnotatedExpr AnnotatedExpr | LiteralAExpr Value deriving (Eq, Ord, Show)
 
 type AnnotatedExpr = (TypeExpr, AnnotatedExprBody)
 
 -- Un-annotated expressions.
-data Expr = VarExpr String | WithTypeExpr Expr TypeExpr | LambdaExpr String Expr | AppExpr Expr Expr | DefExpr String Expr Expr | LiteralExpr Value | NewTypeExpr NewTypeDefinition Expr | AdtExpr AdtDefinition Expr | CaseExpr Expr [(PatternExpr, Expr)] deriving (Eq, Ord, Show)
+data Expr = VarExpr String | WithTypeExpr Expr TypeExpr | LambdaExpr String Expr | AppExpr Expr Expr | DefExpr String Expr Expr | LiteralExpr Value | NewTypeExpr NewTypeDefinition Expr deriving (Eq, Ord, Show)
 
 type TypeId = Int
 
@@ -94,8 +89,6 @@ reduceTypesInAnnotatedExpr (t, abody) = do
       LambdaAExpr param <$> reduceTypeDeep typ <*> reduceTypesInAnnotatedExpr body
     AppAExpr fun arg -> AppAExpr <$> reduceTypesInAnnotatedExpr fun <*> reduceTypesInAnnotatedExpr arg
     DefAExpr var value body -> DefAExpr var <$> reduceTypesInAnnotatedExpr value <*> reduceTypesInAnnotatedExpr body
-    AdtAExpr defn body -> AdtAExpr defn <$> reduceTypesInAnnotatedExpr body
-    CaseAExpr value cases -> CaseAExpr <$> reduceTypesInAnnotatedExpr value <*> mapM (\(pat, body) -> (pat,) <$> reduceTypesInAnnotatedExpr body) cases
     other -> return other
   return (t', abody')
 
@@ -342,12 +335,6 @@ interpretExpr m nts (t, LiteralAExpr value) = do
   var <- newVar (expFamForType t)
   newConstFactor var value
   return $ VarGraphValue var
-
--- interpretExpr m (t, AdtAExpr defn@(AdtDefinition typeName typeParams cases) body) =
---   let newvars = [(caseName, makeCaseFunction defn caseName caseTypes) | (caseName, caseTypes) <- cases]
---   in interpretExpr (foldr (uncurry Map.insert) m newvars) body
-
--- interpretExpr m (t, CaseAExpr value cases) = 
 
 notVar :: VarId -> GraphBuilder Value VarId
 notVar x = do

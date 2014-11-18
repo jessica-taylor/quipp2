@@ -31,6 +31,9 @@ infinity = read "Infinity"
 negInfinity :: Double
 negInfinity = read "-Infinity"
 
+funPow :: Int -> (a -> a) -> a -> a
+funPow n f x = iterate f x !! n
+
 iterateM :: Monad m => Int -> (a -> m a) -> a -> m [a]
 iterateM 0 _ x = return [x]
 iterateM n f x = liftM (x:) (f x >>= iterateM (n-1) f)
@@ -103,3 +106,11 @@ quadApproximation f x =
       c = f x - b * x - a * x * x
   in (c, b, a)
 
+
+mean xs = sum xs / fromIntegral (length xs)
+
+variance xs = sum [(x-m)^2 | x <- xs] / fromIntegral (length xs) where m = mean xs
+
+covariance xys = sum [(x - ux) * (y - uy) | (x, y) <- xys] / fromIntegral (length xys)
+  where ux = mean (map fst xys)
+        uy = mean (map snd xys)

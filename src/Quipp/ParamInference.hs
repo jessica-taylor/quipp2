@@ -41,7 +41,7 @@ type FST = (FactorGraphState Value, FactorGraphParams)
 
 initFst :: FactorGraphTemplate Value -> RVar FST
 initFst templ = do
-  params <- randTemplateParams templ
+  params <- randTemplateParams 0.001 templ
   return (initFactorGraphState (instantiateTemplate templ params), params)
 
 
@@ -63,7 +63,7 @@ inferParameters :: ParamInferenceOptions -> TypeExpr -> GraphBuilder Value Graph
 inferParameters opts t model = do
   let (singleSampleTemplate, _) = runGraphBuilder model
   traceShow singleSampleTemplate $ return ()
-  randParams <- randTemplateParams singleSampleTemplate
+  randParams <- randTemplateParams 10.0 singleSampleTemplate
   samps <- takeSamples (optsNumSamples opts) model randParams
   -- trace ("samples: " ++ show samps) $ return ()
   let condNet = conditionedNetwork t model (map snd samps)

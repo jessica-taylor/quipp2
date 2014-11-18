@@ -9,6 +9,7 @@ import Text.Parsec.Combinator
 import Text.Parsec.Prim
 
 import Quipp.TypeInference
+import Quipp.Util
 import Quipp.Value
 
 keywords = ["data", "let", "in", "case", "of", "def"]
@@ -16,6 +17,37 @@ keywords = ["data", "let", "in", "case", "of", "def"]
 wordChar = satisfy (\x -> isAlphaNum x || x == '_')
 
 wordBreak = notFollowedBy wordChar
+
+type AdtDefinition = (String, [String], [(String, [TypeExpr])])
+
+varList :: [String]
+varList = ["x_" ++ show i | i <- [0..]]
+
+translateNonRecursiveAdtDefinition :: AdtDefinition -> Expr -> Expr
+translateNonRecursiveAdtDefinition (name, params, cases) body =
+  let pairExpr x y = AppExpr (AppExpr (VarExpr "pair") x) y
+      leftExpr = AppExpr (VarExpr "left")
+      rightExpr = AppExpr (VarExpr "right")
+      getConstr i ts = foldr LambdaExpr (leftsAndRight $ foldr pairExpr (VarExpr "unit") (map VarExpr vars)) vars
+        where vars = take (length ts) varList
+              leftsAndRight | i == length cases - 1 = funPow i rightExpr
+                            | otherwise = leftExpr . funPow i rightExpr
+  in NewTypeExpr (name, params, foldr1 eitherType [foldr pairType (ConstTExpr "Unit") ts | (_, ts) <- cases])
+      $ foldr (\(i, (constrName, ts)) -> DefExpr constrName (getConstr i ts)) body (zip [0..] cases)
+
+recursiveAdtDefinitionToFunctor :: AdtDefinition -> AdtDefinition
+recursiveAdtDefinitionToFunctor (name, params, cases) =
+  let recVar = name ++ "_rec"
+      fixCase (caseName, ts) = (caseName, map fixType ts)
+      recType = foldl1 AppTExpr $ map VarTExpr (name:params)
+      fixType t | t == recType = VarTExpr recVar
+      fixType (AppTExpr fun arg) = AppTExpr (fixType fun) (fixType arg)
+      fixType (ConstTExpr t) | t == name = error "Cannot handle polymorphic recursion"
+      fixType other = other
+  in (name, params ++ [recVar], map fixCase cases)
+
+
+
 
 infixl 1 ^>>
 
@@ -126,51 +158,51 @@ newTypeExpr = do
 
 
 
-varPatternExpr = VarPExpr <$> lowerId
-
-constrPatternExpr = do
-  constr <- upperId
-  return $ ConstrPExpr constr []
-
-atomPatternExpr = varPatternExpr <|> constrPatternExpr <|> withParens patternExpr
-
-appPatternExpr = foldl1 makeApp <$> many1 atomPatternExpr
-  where makeApp (ConstrPExpr constr fields) x = ConstrPExpr constr (fields ++ [x])
-
-patternExpr = appPatternExpr
-
-singleCaseExpr = do
-  pat <- patternExpr
-  spacedString "->"
-  body <- expr
-  spacedString ";"
-  return (pat, body)
-
-caseExpr = do
-  stringWithBreak "case"
-  value <- expr
-  spacedString "{"
-  cases <- many singleCaseExpr
-  spacedString "}"
-  return $ CaseExpr value cases
-
-
-adtCase = do
-  constr <- upperId
-  fields <- many typeExpr
-  return (constr, fields)
-
-adtExpr = do
-  stringWithBreak "data"
-  typeName <- upperId
-  paramNames <- many lowerId
-  spacedString "="
-  cases <- adtCase `sepBy` spacedString "|"
-  spacedString ";"
-  body <- expr
-  return $ AdtExpr (AdtDefinition typeName paramNames cases) body
+-- varPatternExpr = VarPExpr <$> lowerId
+-- 
+-- constrPatternExpr = do
+--   constr <- upperId
+--   return $ ConstrPExpr constr []
+-- 
+-- atomPatternExpr = varPatternExpr <|> constrPatternExpr <|> withParens patternExpr
+-- 
+-- appPatternExpr = foldl1 makeApp <$> many1 atomPatternExpr
+--   where makeApp (ConstrPExpr constr fields) x = ConstrPExpr constr (fields ++ [x])
+-- 
+-- patternExpr = appPatternExpr
+-- 
+-- singleCaseExpr = do
+--   pat <- patternExpr
+--   spacedString "->"
+--   body <- expr
+--   spacedString ";"
+--   return (pat, body)
+-- 
+-- caseExpr = do
+--   stringWithBreak "case"
+--   value <- expr
+--   spacedString "{"
+--   cases <- many singleCaseExpr
+--   spacedString "}"
+--   return $ CaseExpr value cases
 
 
-expr = try letExpr <|> try lambdaExpr <|> try ofTypeExpr <|> try adtExpr <|> try caseExpr
+-- adtCase = do
+--   constr <- upperId
+--   fields <- many typeExpr
+--   return (constr, fields)
+
+-- adtExpr = do
+--   stringWithBreak "data"
+--   typeName <- upperId
+--   paramNames <- many lowerId
+--   spacedString "="
+--   cases <- adtCase `sepBy` spacedString "|"
+--   spacedString ";"
+--   body <- expr
+--   return $ AdtExpr (AdtDefinition typeName paramNames cases) body
+
+
+expr = try letExpr <|> try lambdaExpr <|> try ofTypeExpr
 
 toplevel = spaces >> expr
