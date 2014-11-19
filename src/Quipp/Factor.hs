@@ -8,7 +8,7 @@ module Quipp.Factor (
   makeFactorGraphTemplate, instantiateTemplate, instantiateTemplateWithVariableParameters,
   FactorGraphState, initFactorGraphState, varExpSufStat, newVarLikelihood,
   factorExpLogValue,
-  FactorGraphParams, randTemplateParams, updateTemplateParams,
+  FactorGraphParams, randTemplateParams, updateTemplateParams, updateTemplateParamsMH,
   ifThenElseFactor,
   notFactor) where
 
@@ -258,6 +258,19 @@ updateTemplateParams template origParams states = Map.mapWithKey updateParam ori
                 in (weight, concat (map (varExpFeatures origGraph state) fvarids),
                     varExpSufStat origGraph state svarid)
           in expFamMLE ef [factorValues factorId weight state | factorId <- factorIds, (weight, state) <- states] origParam !! 30
+
+updateTemplateParamsMH :: FactorGraphTemplate v -> FactorGraphParams -> [(Double, FactorGraphState v)] -> RVar FactorGraphParams
+updateTemplateParamsMH template origParams states = liftM Map.fromList $ mapM updateParam $ Map.toList origParams
+  where origGraph = instantiateTemplate template origParams
+        updateParam (randFunId, origParam) =
+          let (ef, featureEfs, factorIds) = factorGraphTemplateRandFunctions template ! randFunId
+              factorValues factorId weight state =
+                let (_, svarid:fvarids) = factorGraphTemplateFactors template ! factorId
+                in (weight, concat (map (varExpFeatures origGraph state) fvarids),
+                    varExpSufStat origGraph state svarid)
+          in do
+            paramsList <- expFamMH ef [factorValues factorId weight state | factorId <- factorIds, (weight, state) <- states] origParam
+            return (randFunId, paramsList !! 10)
 
 notLikelihood :: Likelihood Value -> Likelihood Value
 notLikelihood (KnownValue (BoolValue False)) = KnownValue (BoolValue True)

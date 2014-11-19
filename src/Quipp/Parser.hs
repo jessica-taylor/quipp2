@@ -2,8 +2,11 @@
 module Quipp.Parser (toplevel) where
 
 import Debug.Trace
+
 import Control.Applicative ((<$>), (<*>))
 import Data.Char
+import Data.Map (Map)
+import qualified Data.Map as Map
 import Text.Parsec.Char
 import Text.Parsec.Combinator
 import Text.Parsec.Prim
@@ -22,6 +25,8 @@ type AdtDefinition = (String, [String], [(String, [TypeExpr])])
 
 varList :: [String]
 varList = ["x_" ++ show i | i <- [0..]]
+
+type ParseContext = Map String AdtDefinition
 
 translateNonRecursiveAdtDefinition :: AdtDefinition -> Expr -> Expr
 translateNonRecursiveAdtDefinition (name, params, cases) body =
@@ -46,7 +51,7 @@ recursiveAdtDefinitionToFunctor (name, params, cases) =
       fixType other = other
   in (name, params ++ [recVar], map fixCase cases)
 
-
+-- data PatternExpr = VarPExpr String | ConstrPExpr String [PatternExpr]
 
 
 infixl 1 ^>>

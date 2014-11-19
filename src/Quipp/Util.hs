@@ -64,6 +64,9 @@ realToDouble = fromRational . toRational
 
 type Matrix a = [[a]]
 
+diagonalEntries :: Matrix a -> [a]
+diagonalEntries ((x:xs):rows) = x : diagonalEntries (map tail rows)
+
 outerProduct :: Num a => [a] -> [a] -> Matrix a
 outerProduct as bs = [[a*b | b <- bs] | a <- as]
 

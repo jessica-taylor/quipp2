@@ -5,7 +5,7 @@ module Quipp.ExpFam (ExpFam(ExpFam, expFamName, expFamD, expFamSufStat, expFamG,
                      expFamSufStatToLikelihood, expFamCrossEntropy,
                      getNatParam,
                      Params,
-                     promoteExpFam, expFamLogProbability, expFamMLE,
+                     promoteExpFam, expFamLogProbability, expFamMLE, expFamMH,
                      Likelihood(KnownValue, NatParam), promoteLikelihood, negInfinity,
                      likelihoodLogProbability,
                      timesLikelihood, productLikelihoods,
@@ -13,7 +13,7 @@ module Quipp.ExpFam (ExpFam(ExpFam, expFamName, expFamD, expFamSufStat, expFamG,
                      gaussianExpFam, categoricalExpFam) where
 
 import Debug.Trace
-import Control.Monad (liftM)
+import Control.Monad (liftM, zipWithM)
 import Data.Foldable (foldlM)
 import Data.Maybe (fromJust)
 import Data.Random (RVarT, RVar, normal, gamma)
@@ -84,6 +84,34 @@ newtonMethodStep f x =
 newtonMethod :: ([Double] -> (Double, [Double], Matrix Double)) -> [Double] -> [[Double]]
 newtonMethod f = iterate (newtonMethodStep f)
 
+mhNewtonMethodProposalDistr :: ([Double] -> (Double, [Double], Matrix Double)) -> [Double] -> [(Double, Double)]
+mhNewtonMethodProposalDistr f xs =
+  let (val, grad, hess) = f xs
+  in [if h >= 0 then (x, infinity) else (x - g / h, -h) | (x, g, h) <- zip3 xs grad (diagonalEntries hess)]
+
+normalLogProb :: Double -> Double -> Double -> Double
+normalLogProb mean prec x
+  | prec == infinity = if x == mean then 0.0 else negInfinity
+  | otherwise = log prec / 2 - prec * (x - mean)^2 / 2
+
+mhNewtonMethodStep :: ([Double] -> (Double, [Double], Matrix Double)) -> [Double] -> RVar [Double]
+mhNewtonMethodStep f xs = do
+  let propDistr = mhNewtonMethodProposalDistr f xs
+  shrinkFactor <- liftM exp $ exponential 1.0
+  proposal <- zipWithM (\x (m, p) -> normal (x + (m - x) / shrinkFactor) (sqrt (1 / p))) xs propDistr
+  let propLogProb = sum [normalLogProb m p x | (x, (m, p)) <- zip proposal propDistr]
+  let reversePropDistr = mhNewtonMethodProposalDistr f proposal
+  let revPropLogProb = sum [normalLogProb m p x | (x, (m, p)) <- zip xs reversePropDistr]
+  let fst3 (a, _, _) = a
+  -- let mhLog = fst3 (f proposal) - fst3 (f xs) + revPropLogProb - propLogProb
+  let mhLog = fst3 (f proposal) - fst3 (f xs)
+  -- traceShow (fst3 (f proposal), fst3 (f xs), mhLog) $ return ()
+  logUnitInterval <- exponential 1.0
+  return $ if mhLog >= logUnitInterval then proposal else xs
+
+mhNewtonMethod :: ([Double] -> (Double, [Double], Matrix Double)) -> [Double] -> RVar [[Double]]
+mhNewtonMethod f x = iterateRVar (mhNewtonMethodStep f) x
+
 ratNum = (fromRational :: Rational -> Double) . toRational
 
 type Params m = ([m], Matrix m)
@@ -129,6 +157,13 @@ expFamMLE fam samples etaStart = -- trace ("\nexpFamMLE " ++ show samples) $
       f eta = sum [fromDouble weight * expFamLogProbability fam params (map fromDouble exs) (map fromDouble ys) | (weight, exs, {- varxs, -} ys) <- samples]
         where params = vectorToParams fam eta
   in map (vectorToParams fam) $ newtonMethod (\eta -> (f eta, grad f eta, hessian f eta)) $ paramsToVector etaStart
+
+expFamMH :: ExpFam a -> [(Double, [Double], [Double])] -> Params Double -> RVar [Params Double]
+expFamMH fam samples etaStart = -- trace ("\nexpFamMLE " ++ show samples) $
+  let f :: RealFloat m => [m] -> m
+      f eta = sum [fromDouble weight * expFamLogProbability fam params (map fromDouble exs) (map fromDouble ys) | (weight, exs, {- varxs, -} ys) <- samples]
+        where params = vectorToParams fam eta
+  in liftM (map (vectorToParams fam)) $ mhNewtonMethod (\eta -> (f eta, grad f eta, hessian f eta)) $ paramsToVector etaStart
 
 data Likelihood v = KnownValue v | NatParam [Double] deriving (Eq, Ord, Show)
 
