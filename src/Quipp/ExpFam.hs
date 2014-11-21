@@ -15,6 +15,7 @@ module Quipp.ExpFam (ExpFam(ExpFam, expFamName, expFamD, expFamSufStat, expFamG,
 import Debug.Trace
 import Control.Monad (liftM, zipWithM)
 import Data.Foldable (foldlM)
+import Data.List (groupBy, sortBy)
 import Data.Maybe (fromJust)
 import Data.Random (RVarT, RVar, normal, gamma)
 import Data.Random.Distribution.Categorical (categorical)
@@ -102,7 +103,6 @@ mhNewtonMethodStep f xs = do
   let propLogProb = sum [normalLogProb m p x | (x, (m, p)) <- zip proposal propDistr]
   let reversePropDistr = mhNewtonMethodProposalDistr f proposal
   let revPropLogProb = sum [normalLogProb m p x | (x, (m, p)) <- zip xs reversePropDistr]
-  let fst3 (a, _, _) = a
   -- let mhLog = fst3 (f proposal) - fst3 (f xs) + revPropLogProb - propLogProb
   let mhLog = fst3 (f proposal) - fst3 (f xs)
   -- traceShow (fst3 (f proposal), fst3 (f xs), mhLog) $ return ()
@@ -133,6 +133,13 @@ expFamLogProbability :: RealFloat m => ExpFam v -> Params m -> [m] -> [m] -> m
 expFamLogProbability fam eta argFeatures ss = dotProduct np ss - expFamG fam np
   where np = getNatParam fam eta argFeatures
 
+groupSamplesByFeatures :: [(Double, [Double], [Double])] -> [(Double, [Double], [Double])]
+groupSamplesByFeatures samps =
+  let sortedByFeatures = sortBy (\(_, f, _) (_, f', _) -> compare f f') samps
+      grouped = groupBy (\(_, f, _) (_, f', _) -> f == f') sortedByFeatures
+  in [(totWeight, snd3 (head g), map sum $ transpose [scaleVec (w / totWeight) s | (w, _, s) <- g])
+      | g <- grouped, let totWeight = sum $ map fst3 g]
+
 -- Special case for Gaussian (linear regression).  I have confirmed that
 -- this is equivalent.  Note that this does not work for VMP or for
 -- samples with weight not equal to 1.
@@ -153,15 +160,17 @@ expFamMLE fam samples etaStart | expFamName fam == "gaussian" =
     repeat $ if isNaN covar then etaStart else ([yint / residVar, -1 / (2 * residVar)], [[slope / residVar]])
 
 expFamMLE fam samples etaStart = -- trace ("\nexpFamMLE " ++ show samples) $
-  let f :: RealFloat m => [m] -> m
-      f eta = sum [fromDouble weight * expFamLogProbability fam params (map fromDouble exs) (map fromDouble ys) | (weight, exs, {- varxs, -} ys) <- samples]
+  let samples' = groupSamplesByFeatures samples
+      f :: RealFloat m => [m] -> m
+      f eta = sum [fromDouble weight * expFamLogProbability fam params (map fromDouble exs) (map fromDouble ys) | (weight, exs, {- varxs, -} ys) <- samples']
         where params = vectorToParams fam eta
   in map (vectorToParams fam) $ newtonMethod (\eta -> (f eta, grad f eta, hessian f eta)) $ paramsToVector etaStart
 
 expFamMH :: ExpFam a -> [(Double, [Double], [Double])] -> Params Double -> RVar [Params Double]
 expFamMH fam samples etaStart = -- trace ("\nexpFamMLE " ++ show samples) $
-  let f :: RealFloat m => [m] -> m
-      f eta = sum [fromDouble weight * expFamLogProbability fam params (map fromDouble exs) (map fromDouble ys) | (weight, exs, {- varxs, -} ys) <- samples]
+  let samples' = groupSamplesByFeatures samples
+      f :: RealFloat m => [m] -> m
+      f eta = sum [fromDouble weight * expFamLogProbability fam params (map fromDouble exs) (map fromDouble ys) | (weight, exs, {- varxs, -} ys) <- samples']
         where params = vectorToParams fam eta
   in liftM (map (vectorToParams fam)) $ mhNewtonMethod (\eta -> (f eta, grad f eta, hessian f eta)) $ paramsToVector etaStart
 

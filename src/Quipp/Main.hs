@@ -1,5 +1,6 @@
 module Quipp.Main where
 
+import Data.Time.Clock (getCurrentTime, utctDayTime)
 import Control.Monad (forM_)
 import Debug.Trace
 import Control.Monad (liftM)
@@ -19,6 +20,7 @@ import Quipp.GraphBuilder
 import Quipp.Parser
 import Quipp.TypeInference
 import Quipp.ParamInference
+
 main = do
   -- contents <- readFile "examples/1d_clustering.quipp"
   contents <- readFile "examples/1d_clustering.quipp"
@@ -35,13 +37,15 @@ main = do
   print resultExpr
   print typed
   let (AppTExpr (AppTExpr (ConstTExpr "->") _) t) = fst typed
-  (actualParams, actualLatents, samples, iters) <- sampleRVar $ inferParameters (ParamInferenceOptions {optsNumSamples = 10}) t builder
+  (actualParams, actualLatents, samples, iters) <- sampleRVar $ inferParameters (ParamInferenceOptions {optsNumSamples = 200}) t builder
   putStrLn $ "ACTUAL PARAMS: " ++ show actualParams
   putStrLn $ "ACTUAL LATENTS: " ++ show actualLatents
   putStrLn $ "SAMPLES: " ++ show samples
   forM_ iters $ \(latents, params) -> do
     putStrLn $ "LATENTS: " ++ show latents
+    fmap utctDayTime getCurrentTime >>= print
     putStrLn $ "EM PARAMS: " ++ show params
+    fmap utctDayTime getCurrentTime >>= print
   -- gibbsStates <- runRVarTWith (\(Just x) -> return x) (stateList2 template) StdRandom
   -- mapM_ (putStrLn . ("\nSTATE " ++) . show) gibbsStates
   -- x <- runRVarTWith (\(Just x) -> return x) stateList2 StdRandom

@@ -122,3 +122,12 @@ suf stats: prec, prec*mu, log(prec), prec*mu^2
 P(x; n1, n2) = exp(n2*x^2 + n1*x + n1^2/(4*n2)-1/2*ln(-2*n2))
 suf stats: n2, n1, n1^2/n2, ln(n2)
 
+-------------------------
+
+MH newton method!
+
+What's the probability of getting from a to b?
+We start with a Gaussian centered at c but then shift it partway towards a.
+Specifically, we divide the translation by a Pareto-distributed random variable.
+
+Prob get from a to b = integral for s from 1 to infinity: pareto_prob(x) * prob get to b from gaussian centered at a + (c - a)/s

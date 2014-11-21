@@ -70,7 +70,6 @@ constFactor ss x = Factor {
 --     fnp 2 [[x, x2], [mu, mu2], _] = [-(x2 + mu2 - 2 * x * mu)/2, 0]
 
 
-transpose xs = if maximum (map length xs) == 0 then [] else map head xs : transpose (map tail xs)
 
 -- TODO: something is fishy here.  Things get flipped when they shouldn't.
 expFamFactor :: ExpFam v -> [ExpFam v] -> Params Double -> Factor v
@@ -270,7 +269,7 @@ updateTemplateParamsMH template origParams states = liftM Map.fromList $ mapM up
                     varExpSufStat origGraph state svarid)
           in do
             paramsList <- expFamMH ef [factorValues factorId weight state | factorId <- factorIds, (weight, state) <- states] origParam
-            return (randFunId, paramsList !! 10)
+            return (randFunId, paramsList !! 3)
 
 notLikelihood :: Likelihood Value -> Likelihood Value
 notLikelihood (KnownValue (BoolValue False)) = KnownValue (BoolValue True)

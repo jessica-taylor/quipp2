@@ -10,6 +10,10 @@ import Numeric.LinearAlgebra.Algorithms (linearSolve, pinv)
 import Numeric.AD (diff, Mode, Scalar)
 import System.Random (StdGen, mkStdGen)
 
+fst3 (a, _, _) = a
+snd3 (_, b, _) = b
+thd3 (_, _, c) = c
+
 infixr 9 .:
 (f .: g) x y = f (g x y)
 
@@ -79,6 +83,10 @@ splitListIntoBlocks n lst
         go _ [] = []
         go k lst = take k lst : go k (drop k lst)
 
+scaleVec :: Num a => a -> [a] -> [a]
+scaleVec x = map (x *)
+
+transpose xs = if maximum (map length xs) == 0 then [] else map head xs : transpose (map tail xs)
 
 dotProduct :: Num a => [a] -> [a] -> a
 dotProduct x y = sum (zipWith (*) x y)
