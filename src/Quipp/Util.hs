@@ -51,6 +51,8 @@ iterateRVar f x = do
   seed <- stdUniform
   return $ stateInfList (\(y, gen) -> let (y', gen') = runState (sampleRVar (f y)) gen in (y', (y', gen'))) (x, mkStdGen seed)
 
+groupAnywhereBy :: Ord b => (a -> b) -> [a] -> [[a]]
+groupAnywhereBy f = groupBy ((==) `on` f) . sortBy (compare `on` f)
 
 logSumExp :: RealFloat a => [a] -> a
 logSumExp lps = mx + log (sum [exp (lp - mx) | lp <- lps])

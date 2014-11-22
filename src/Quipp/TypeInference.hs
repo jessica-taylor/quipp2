@@ -525,7 +525,8 @@ defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b >>= cloneWithNewVars, 
   ("either",
    do a <- newVarType "either_left"
       b <- newVarType "either_right"
-      return $ functionType b $ eitherType a b,
+      c <- newVarType "either_res"
+      return $ functionType (eitherType a b) $ functionType (functionType a c) $ functionType (functionType b c) c
    let getResult (PureLeftGraphValue leftVal) leftHandler rightHandler = leftHandler leftVal
        getResult (PureRightGraphValue rightVal) leftHandler rightHandler = rightHandler rightVal
        getResult (EitherGraphValue isRightVar leftVal rightVal) leftHandler rightHandler = do
@@ -577,6 +578,8 @@ defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b >>= cloneWithNewVars, 
      return $ VarGraphValue v),
   ("true", return (ConstTExpr "Bool"), const2 $ liftM VarGraphValue $ constValue boolValueExpFam $ BoolValue True),
   ("false", return (ConstTExpr "Bool"), const2 $ liftM VarGraphValue $ constValue boolValueExpFam $ BoolValue False),
+  ("ifthenelse", return $ functionType (ConstTExpr "Bool") $ functionType (ConstTExpr "Bool") (ConstTExpr "Bool"),
+   const2 $ return $ LambdaGraphValue $ \(VarGraphValue c) -> 
   ("randFunction", return (functionType (ConstTExpr "Unit") $ functionType (VarTExpr "a") $ VarTExpr "b"),
    \(AppTExpr (AppTExpr (ConstTExpr "->") (ConstTExpr "Unit")) (AppTExpr (AppTExpr (ConstTExpr "->") argType) resType)) _ ->
      return $ LambdaGraphValue $ \UnitGraphValue -> do

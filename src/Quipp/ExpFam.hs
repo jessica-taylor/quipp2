@@ -135,8 +135,7 @@ expFamLogProbability fam eta argFeatures ss = dotProduct np ss - expFamG fam np
 
 groupSamplesByFeatures :: [(Double, [Double], [Double])] -> [(Double, [Double], [Double])]
 groupSamplesByFeatures samps =
-  let sortedByFeatures = sortBy (\(_, f, _) (_, f', _) -> compare f f') samps
-      grouped = groupBy (\(_, f, _) (_, f', _) -> f == f') sortedByFeatures
+  let grouped = groupAnywhereBy snd3 samps
   in [(totWeight, snd3 (head g), map sum $ transpose [scaleVec (w / totWeight) s | (w, _, s) <- g])
       | g <- grouped, let totWeight = sum $ map fst3 g]
 

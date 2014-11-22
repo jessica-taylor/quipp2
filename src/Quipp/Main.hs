@@ -23,7 +23,7 @@ import Quipp.ParamInference
 
 main = do
   -- contents <- readFile "examples/1d_clustering.quipp"
-  contents <- readFile "examples/1d_clustering.quipp"
+  contents <- readFile "examples/hmm.quipp"
   let resultExpr =
         case parse toplevel "FILE" contents of
           Left err -> error $ show err

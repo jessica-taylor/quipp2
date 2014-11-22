@@ -15,7 +15,7 @@ import Quipp.TypeInference
 import Quipp.Util
 import Quipp.Value
 
-keywords = ["data", "let", "in", "case", "of", "def"]
+keywords = ["data", "rec", "newtype", "let", "in", "case", "of", "def"]
 
 wordChar = satisfy (\x -> isAlphaNum x || x == '_')
 
@@ -51,8 +51,86 @@ recursiveAdtDefinitionToFunctor (name, params, cases) =
       fixType other = other
   in (name, params ++ [recVar], map fixCase cases)
 
--- data PatternExpr = VarPExpr String | ConstrPExpr String [PatternExpr]
+data PatternExpr = VarPExpr String | ConstrPExpr String [PatternExpr] deriving (Eq, Ord, Show)
 
+data PrimPatternExpr = VarPPExpr String | LeftPPExpr [PrimPatternExpr] | RightPPExpr [PrimPatternExpr]
+
+patsByEither pats =
+  ([(l ++ rest, body) | (LeftPPExpr l:rest, body) <- pats] ++
+   [(VarPPExpr v:rest, AppExpr (LambdaExpr v body) (AppExpr (VarExpr "left") v)) | (VarPPExpr v:rest, body) <- pats]),
+
+   [(r ++ rest, body) | (RightPPExpr r:rest, body) <- pats] ++
+   [(VarPPExpr v:rest, AppExpr (LambdaExpr v body) (AppExpr (VarExpr "right") v)) | (VarPPExpr v:rest, body) <- pats])
+
+
+-- Key question: "do I need to do something differently depending on if the
+-- first thing is a Left or a Right?"
+casesToExpr :: [Expr] -> [([PrimPatternExpr], Expr)] -> Expr
+casesToExpr [] [([], body)] = body
+casesToExpr (x:xs) cases =
+  let cases' = removeRedundantCases cases
+      numVars = length $ fst $ head cases'
+      (leftCases, rightCases) = patsByEither cases'
+  in if length leftCases == 0 || length rightCases == 0 then undefined
+     else if leftCases == rightCases then
+            let VarPPExpr varname = head $ fst $ head leftCases
+            in AppExpr (LambdaExpr varname (casesToExpr xs (map restCases (tail cases')))) x
+     else let varname = "__casesToExpr_" ++ length cases in
+          foldl1 AppExpr [VarExpr "either", x, LambdaExpr varname $ casesToExpr (VarExpr varname : xs) leftCases, LambdaExpr varname $ casesToExpr (VarExpr varname : ys) rightCases]
+
+
+
+
+
+-- How to convert pattern matching to uses of 'either' function?
+-- In the general case, we are pattern matching on a tuple.
+-- Idea: figure out what queries we need to make.
+-- Query the first; then if we haven't reduced it enough, query the second, etc
+
+patsMatchingConstructor :: Int -> String -> [([PatternExpr], Expr)] -> ([([PatternExpr], Expr)], [([PatternExpr], Expr)])
+patsMatchingConstructor i constr = partition (matchesConstr . (!! i) . fst)
+  where matchesConstr (VarPExpr _) = True
+        matchesConstr (ConstrPExpr c _) = c == constr
+
+patsImply :: [PatternExpr] -> [PatternExpr] -> Bool
+patsImply pats1 pats2
+  | length pats1 != length pats2 = undefined
+  | otherwise = all (zipWith patImplies pats1 pats2)
+
+patImplies _ (VarPExpr _) = True
+patImplies (VarPExpr _) (ConstrPExpr _ _) = False
+patImplies (ConstrPExpr c1 f1) (ConstrPExpr c2 f2) =
+  c1 == c2 && patsImply f1 f2
+
+removeRedundantPats :: [[PatternExpr]] -> [[PatternExpr]]
+removeRedundantPats pats = foldl (\pat rest -> if any (flip patsImply pat) rest then rest else pat:rest) [] pats
+
+relevantConstrs :: [[PatternExpr]] -> [(Int, String)]
+relevantConstrs ps = [(i, constr) | p <- ps, (i, ConstrPExpr constr _) <- zip [0..] p]
+
+data CaseTree = SingleCase Expr | CaseTest Int [(String, [([PatternExpr], Expr
+
+filterVarPats :: [(PatternExpr, Expr)] -> ([(String, [PatternExpr], Expr)], Maybe (String, Expr))
+filterVarPats pats =
+  case [(i, var, body) | (i, (VarExpr var, body)) <- zip [0..] pats] of
+    Nothing -> (fromConstrs pats, Nothing)
+    Just (i, var, varbody) -> (fromConstrs (take i pats), Just (var, varbody))
+  where fromConstrs xs = [(constr, fields, body) | (ConstrPExpr constr fields, body) <- xs]
+
+
+groupByToplevelConstrs :: [(PatternExpr, Expr)] -> ([(String, [([PatternExpr], Expr)])], Maybe (PatternExpr, Expr))
+groupByToplevelConstrs pats =
+  let (constrPats, varPat) = filterVarPats pats
+      groupedConstrs = groupAnywhereBy fst3 constrPats
+  in ([(fst3 (head g), zip (map snd3 g) (map thd3 g)) | g <- groupedConstrs],
+      varPat)
+
+caseToEither :: Expr -> [(PatternExpr, Expr)] -> Expr
+caseToEither x cases
+
+
+caseMultiToEither :: [Expr] -> [([PatternExpr], Expr)] -> Expr
+caseMultiToEither xs cases =
 
 infixl 1 ^>>
 
@@ -163,49 +241,50 @@ newTypeExpr = do
 
 
 
--- varPatternExpr = VarPExpr <$> lowerId
--- 
--- constrPatternExpr = do
---   constr <- upperId
---   return $ ConstrPExpr constr []
--- 
--- atomPatternExpr = varPatternExpr <|> constrPatternExpr <|> withParens patternExpr
--- 
--- appPatternExpr = foldl1 makeApp <$> many1 atomPatternExpr
---   where makeApp (ConstrPExpr constr fields) x = ConstrPExpr constr (fields ++ [x])
--- 
--- patternExpr = appPatternExpr
--- 
--- singleCaseExpr = do
---   pat <- patternExpr
---   spacedString "->"
---   body <- expr
---   spacedString ";"
---   return (pat, body)
--- 
--- caseExpr = do
---   stringWithBreak "case"
---   value <- expr
---   spacedString "{"
---   cases <- many singleCaseExpr
---   spacedString "}"
---   return $ CaseExpr value cases
+varPatternExpr = VarPExpr <$> lowerId
+
+constrPatternExpr = do
+  constr <- upperId
+  return $ ConstrPExpr constr []
+
+atomPatternExpr = varPatternExpr <|> constrPatternExpr <|> withParens patternExpr
+
+appPatternExpr = foldl1 makeApp <$> many1 atomPatternExpr
+  where makeApp (ConstrPExpr constr fields) x = ConstrPExpr constr (fields ++ [x])
+
+patternExpr = appPatternExpr
+
+singleCaseExpr = do
+  pat <- patternExpr
+  spacedString "->"
+  body <- expr
+  spacedString ";"
+  return (pat, body)
+
+caseExpr = do
+  stringWithBreak "case"
+  value <- expr
+  spacedString "{"
+  cases <- many singleCaseExpr
+  spacedString "}"
+  return $ CaseExpr value cases
 
 
--- adtCase = do
---   constr <- upperId
---   fields <- many typeExpr
---   return (constr, fields)
+adtCase = do
+  constr <- upperId
+  fields <- many typeExpr
+  return (constr, fields)
 
--- adtExpr = do
---   stringWithBreak "data"
---   typeName <- upperId
---   paramNames <- many lowerId
---   spacedString "="
---   cases <- adtCase `sepBy` spacedString "|"
---   spacedString ";"
---   body <- expr
---   return $ AdtExpr (AdtDefinition typeName paramNames cases) body
+adtExpr = do
+  stringWithBreak "data"
+  isRec <- (stringWithBreak "rec" >> return True) <|> return False
+  typeName <- upperId
+  paramNames <- many lowerId
+  spacedString "="
+  cases <- adtCase `sepBy` spacedString "|"
+  spacedString ";"
+  body <- expr
+  return $ translateNonRecursiveAdtDefinition (typeName, paramNames, cases) body
 
 
 expr = try letExpr <|> try lambdaExpr <|> try ofTypeExpr

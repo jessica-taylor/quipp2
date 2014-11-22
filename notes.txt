@@ -131,3 +131,12 @@ We start with a Gaussian centered at c but then shift it partway towards a.
 Specifically, we divide the translation by a Pareto-distributed random variable.
 
 Prob get from a to b = integral for s from 1 to infinity: pareto_prob(x) * prob get to b from gaussian centered at a + (c - a)/s
+
+----
+
+Case expressions:
+
+case (foo, bar) of
+  (X a b c, Y d e) -> ...
+  (X a b c, d) -> ...
+  (Y a b, e) -> ...
