@@ -53,7 +53,7 @@ recursiveAdtDefinitionToFunctor (name, params, cases) =
 
 data PatternExpr = VarPExpr String | ConstrPExpr String [PatternExpr] deriving (Eq, Ord, Show)
 
-data PrimPatternExpr = VarPPExpr String | LeftPPExpr [PrimPatternExpr] | RightPPExpr [PrimPatternExpr]
+data PrimPatternExpr = VarPPExpr String | UnitPPExpr | PairPPExpr PrimPatternExpr PrimPatternExpr | LeftPPExpr PrimPatternExpr | RightPPExpr PrimPatternExpr
 
 patsByEither pats =
   ([(l ++ rest, body) | (LeftPPExpr l:rest, body) <- pats] ++
@@ -65,11 +65,9 @@ patsByEither pats =
 
 -- Key question: "do I need to do something differently depending on if the
 -- first thing is a Left or a Right?"
-casesToExpr :: [Expr] -> [([PrimPatternExpr], Expr)] -> Expr
-casesToExpr [] [([], body)] = body
-casesToExpr (x:xs) cases =
+casesToExpr :: Expr -> [(PrimPatternExpr, Expr)] -> Expr
+casesToExpr ex cases =
   let cases' = removeRedundantCases cases
-      numVars = length $ fst $ head cases'
       (leftCases, rightCases) = patsByEither cases'
   in if length leftCases == 0 || length rightCases == 0 then undefined
      else if leftCases == rightCases then
