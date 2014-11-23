@@ -33,9 +33,9 @@ translateNonRecursiveAdtDefinition (name, params, cases) body =
   let pairExpr x y = AppExpr (AppExpr (VarExpr "pair") x) y
       leftExpr = AppExpr (VarExpr "left")
       rightExpr = AppExpr (VarExpr "right")
-      getConstr i ts = foldr LambdaExpr (leftsAndRight $ foldr pairExpr (VarExpr "unit") (map VarExpr vars)) vars
+      getConstr i ts = foldr LambdaExpr (rightsAndLeft $ foldr pairExpr (VarExpr "unit") (map VarExpr vars)) vars
         where vars = take (length ts) varList
-              leftsAndRight | i == length cases - 1 = funPow i rightExpr
+              rightsAndLeft | i == length cases - 1 = funPow i rightExpr
                             | otherwise = leftExpr . funPow i rightExpr
   in NewTypeExpr (name, params, foldr1 eitherType [foldr pairType (ConstTExpr "Unit") ts | (_, ts) <- cases])
       $ foldr (\(i, (constrName, ts)) -> DefExpr constrName (getConstr i ts)) body (zip [0..] cases)
@@ -53,82 +53,125 @@ recursiveAdtDefinitionToFunctor (name, params, cases) =
 
 data PatternExpr = VarPExpr String | ConstrPExpr String [PatternExpr] deriving (Eq, Ord, Show)
 
-data PrimPatternExpr = VarPPExpr String | UnitPPExpr | PairPPExpr PrimPatternExpr PrimPatternExpr | LeftPPExpr PrimPatternExpr | RightPPExpr PrimPatternExpr
+selectWithEither :: Int -> Int -> Expr -> Expr -> Expr -> Expr
+selectWithEither index numIndices f other x
+  | numIndices == 1 && index == 0 = AppExpr f x
+  | numIndices <= 1 = undefined
+  | index == 0 = foldl1 AppExpr [VarExpr "either", x, f, LambdaExpr varname other]
+  | index > 0 = foldl1 AppExpr [VarExpr "either", LambdaExpr varname other,
+                                LambdaExpr varname (selectWithEither (index - 1) (numIndices - 1) f other (VarExpr varname))]
+  where varname = "__selectWithEither" ++ show index ++ "_" ++ show maxIndex
 
-patsByEither pats =
-  ([(l ++ rest, body) | (LeftPPExpr l:rest, body) <- pats] ++
-   [(VarPPExpr v:rest, AppExpr (LambdaExpr v body) (AppExpr (VarExpr "left") v)) | (VarPPExpr v:rest, body) <- pats]),
+unpackNestedTuple :: [String] -> Expr -> Expr -> Expr
+unpackNestedTuple vars tup body =
+  foldr (\(i, v) b -> AppExpr (LambdaExpr v b) (AppExpr (VarExpr "fst") $ funPow i (AppExpr (VarExpr "snd")) tup)) body (zip [0..] vars)
 
-   [(r ++ rest, body) | (RightPPExpr r:rest, body) <- pats] ++
-   [(VarPPExpr v:rest, AppExpr (LambdaExpr v body) (AppExpr (VarExpr "right") v)) | (VarPPExpr v:rest, body) <- pats])
+tryMatch :: (String -> (Int, Int, Int)) -> Expr -> (PatternExpr, Expr) -> Expr -> Expr
+tryMatch _ ex (VarPExpr v, body) _ =
+  AppExpr (LambdaExpr v body) ex
+tryMatch arity ex (ConstrPExpr constr fields, body) fail =
+  let (index, numConstrs, numFields) = arity constr
+  in if numFields != length fields then undefined
+     else selectWithEither index numConstrs (LambdaExpr varname (tryMatchTuple arity (VarExpr varname) (fields, body) fail)) fail ex
+
+tryMatchTuple :: (String -> (Int, Int, Int)) -> Expr -> ([PatternExpr], Expr)
+
+-- how to tell if some matches are exhaustive?
+--
+
+data PrimPattenExpr = VarPPExpr String | UnitPPExpr | PairPPExpr PrimPatternExpr PrimPatternExpr | LeftPPExpr PrimPatternExpr | RightPPExpr PrimPatternExpr | NewtypeConstrPPExpr String PrimPatternExpr
+
+toPrimPat :: (String -> AdtDefinition) -> PatternExpr -> PrimPatternExpr
+toPrimPat _ (VarPExpr s) = VarPPExpr s
+toPrimPat constrDef (ConstrPExpr constr fields) =
+  let (adtName, _, adtCases) = constrDef constr
+      caseIndex = fromJust $ findIndex ((== constr) . fst) adtCases
+      leftsAndRight | caseIndex == length adtCases - 1 = funPow caseIndex LeftPPExpr
+                    | otherwise = RightPPExpr . funPow caseIndex LeftPPExpr
+  in NewtypeConstrPPExpr adtName $ leftsAndRight $ foldr PairPPExpr UnitPPExpr $ map (toPrimPat constrDef) fields
+
+primPatImplies :: PrimPatternExpr -> PrimPatternExpr -> Bool
+primPatImplies _ (VarPPExpr _) = True
+primPatImplies (VarPPExpr _) _ = False
+primPatImplies UnitPPExpr UnitPPExpr = True
+primPatImplies (PairPPExpr a b) (PairPPExpr c d) = primPatImplies a c && primPatImplies b d
+primPatImplies (LeftPPExpr a) (LeftPPExpr b) = primPatImplies a b
+primPatImplies (RightPPExpr a) (RightPPExpr b) = primPatImplies a b
+primPatImplies (NewtypeConstrPPExpr c a) (NewtypeConstrPPExpr c' b) = c == c' && primPatImplies a b
+primPatImplies _ _ = False
+
+-- TODO:  what if we match on Left a, then Right b, then c?
+removeRedundantCases :: [(PrimPatternExpr, Expr)] -> [(PrimPatternExpr, Expr)]
+removeRedundantCases cases = [(pat, body) | ((pat, body), prevPats) <- zip cases (inits (map fst cases)), not $ any (primPatImplies pat) prevPats]
+
+type PrimPatternLens = [Bool]
+
+lensToExpr :: PrimPatternLens -> Expr -> Expr
+lensToExpr lens val = foldr (\l -> AppExpr (VarExpr (if l then "snd" else "fst"))) val lens
+
+modifyLensExpr :: PrimPatternLens -> Expr -> Expr -> Expr
+modifyLensExpr [] f x = AppExpr f x
+modifyLensExpr (False:ls) f x =
+  foldl1 AppExpr [VarExpr "pair", modifyLensExpr ls f (AppExpr (VarExpr "fst") x), AppExpr (VarExpr "snd") x]
+modifyLensExpr (True:ls) f x =
+  foldl1 AppExpr [VarExpr "pair", AppExpr (VarExpr "fst") x, modifyLensExpr ls f (AppExpr (VarExpr "snd") x)]
+
+pointToExpandable :: PrimPatternExpr -> Maybe (PrimPatternLens, Maybe String)
+pointToExpandable (LeftPPExpr _) = return ([], Nothing)
+pointToExpandable (RightPPExpr _) = return ([], Nothing)
+pointToExpandable (NewtypeConstrPPExpr c _) = return ([], Just c)
+pointToExpandable (PairPPExpr first second) =
+  search False first `mplus` search True second
+  where search b p = do
+    (lens, tag) <- pointToExpandable p
+    return (b : lens, tag)
+pointToExpandable other = Nothing
+
+pointToAnyExpandable :: [PrimPatternExpr] -> Maybe PrimPatternLens
+pointToAnyExpandable = foldl1 mplus . map pointToExpandable
+
+partitionCase :: PrimPatternLens -> (PrimPatternExpr, Expr) -> ([(PrimPatternExpr, Expr)], [(PrimPatternExpr, Expr)])
+partitionCase lens (VarPPExpr v, body) =
+  let part f = [(VarPPExpr v, AppExpr (LambdaExpr v body) $ modifyLensExpr lens (VarExpr f) v)]
+  in (part "left", part "right")
+partitionCase [] (LeftPPExpr p, body) = ([(p, body)], [])
+partitionCase [] (RightPPExpr p, body) = ([], [(p, body)])
+partitionCase (False:l) (PairPPExpr f s, body) =
+  let (fcasesl, fcasesr) = partitionCase l (f, body) in
+      ([(PairPPExpr f' s, b) | (f', b) <- fcasesl],
+       [(PairPPExpr f' s, b) | (f', b) <- fcasesr])
+partitionCase (True:l) (PairPPExpr f s, body) =
+  let (scasesl, scasesr) = partitionCase l (s, body) in
+      ([(PairPPExpr f s', b) | (s', b) <- scasesl],
+       [(PairPPExpr f s', b) | (s', b) <- scasesr])
+
+partitionCases :: PrimPatternLens -> [(PrimPatternExpr, Expr)] -> ([(PrimPatternExpr, Expr)], [(PrimPatternExpr, Expr)])
+partitionCases lens cases =
+  let partCases = map (partitionCase lens) cases in (concat $ map fst partCases, concat $ map snd partCases)
+
+expandNewtypeCase :: PrimPatternLens -> String -> (PrimPatternExpr, Expr) -> (PrimPatternExpr, Expr)
+expandNewtypeCase lens constrName (VarPPExpr v, body) =
+  (VarPPExpr v, AppExpr (LambdaExpr v body) $ modifyLensExpr lens (VarExpr constrName) v)
+expandNewtypeCase [] constrName (NewtypeConstrPPExpr constrName' p, body)
+  | constrName == constrName' = (p, body)
+expandNewtypeCase (False:l) (PairPPExpr f s, body) =
+  let (f', b) = expandNewtypeCase l f in (PairPPExpr f' s, body)
+expandNewtypeCase (True:l) (PairPPExpr f s, body) =
+  let (s', b) = expandNewtypeCase l s in (PairPPExpr f s', body)
 
 
--- Key question: "do I need to do something differently depending on if the
--- first thing is a Left or a Right?"
 casesToExpr :: Expr -> [(PrimPatternExpr, Expr)] -> Expr
 casesToExpr ex cases =
-  let cases' = removeRedundantCases cases
-      (leftCases, rightCases) = patsByEither cases'
-  in if length leftCases == 0 || length rightCases == 0 then undefined
-     else if leftCases == rightCases then
-            let VarPPExpr varname = head $ fst $ head leftCases
-            in AppExpr (LambdaExpr varname (casesToExpr xs (map restCases (tail cases')))) x
-     else let varname = "__casesToExpr_" ++ length cases in
-          foldl1 AppExpr [VarExpr "either", x, LambdaExpr varname $ casesToExpr (VarExpr varname : xs) leftCases, LambdaExpr varname $ casesToExpr (VarExpr varname : ys) rightCases]
-
-
-
-
-
--- How to convert pattern matching to uses of 'either' function?
--- In the general case, we are pattern matching on a tuple.
--- Idea: figure out what queries we need to make.
--- Query the first; then if we haven't reduced it enough, query the second, etc
-
-patsMatchingConstructor :: Int -> String -> [([PatternExpr], Expr)] -> ([([PatternExpr], Expr)], [([PatternExpr], Expr)])
-patsMatchingConstructor i constr = partition (matchesConstr . (!! i) . fst)
-  where matchesConstr (VarPExpr _) = True
-        matchesConstr (ConstrPExpr c _) = c == constr
-
-patsImply :: [PatternExpr] -> [PatternExpr] -> Bool
-patsImply pats1 pats2
-  | length pats1 != length pats2 = undefined
-  | otherwise = all (zipWith patImplies pats1 pats2)
-
-patImplies _ (VarPExpr _) = True
-patImplies (VarPExpr _) (ConstrPExpr _ _) = False
-patImplies (ConstrPExpr c1 f1) (ConstrPExpr c2 f2) =
-  c1 == c2 && patsImply f1 f2
-
-removeRedundantPats :: [[PatternExpr]] -> [[PatternExpr]]
-removeRedundantPats pats = foldl (\pat rest -> if any (flip patsImply pat) rest then rest else pat:rest) [] pats
-
-relevantConstrs :: [[PatternExpr]] -> [(Int, String)]
-relevantConstrs ps = [(i, constr) | p <- ps, (i, ConstrPExpr constr _) <- zip [0..] p]
-
-data CaseTree = SingleCase Expr | CaseTest Int [(String, [([PatternExpr], Expr
-
-filterVarPats :: [(PatternExpr, Expr)] -> ([(String, [PatternExpr], Expr)], Maybe (String, Expr))
-filterVarPats pats =
-  case [(i, var, body) | (i, (VarExpr var, body)) <- zip [0..] pats] of
-    Nothing -> (fromConstrs pats, Nothing)
-    Just (i, var, varbody) -> (fromConstrs (take i pats), Just (var, varbody))
-  where fromConstrs xs = [(constr, fields, body) | (ConstrPExpr constr fields, body) <- xs]
-
-
-groupByToplevelConstrs :: [(PatternExpr, Expr)] -> ([(String, [([PatternExpr], Expr)])], Maybe (PatternExpr, Expr))
-groupByToplevelConstrs pats =
-  let (constrPats, varPat) = filterVarPats pats
-      groupedConstrs = groupAnywhereBy fst3 constrPats
-  in ([(fst3 (head g), zip (map snd3 g) (map thd3 g)) | g <- groupedConstrs],
-      varPat)
-
-caseToEither :: Expr -> [(PatternExpr, Expr)] -> Expr
-caseToEither x cases
-
-
-caseMultiToEither :: [Expr] -> [([PatternExpr], Expr)] -> Expr
-caseMultiToEither xs cases =
+  let cases' = removeRedundantCases cases in
+  case pointToExpandable (map fst cases') of
+    Nothing -> fullyExpandedMatch ex (fst cases')
+    Just (lens, Nothing) ->
+      let (leftCases, rightCases) = partitionCases lens cases'
+          handler cs = LambdaExpr varname $ casesToExpr (modifyLensExpr lens (LambdaExpr varname2 (VarExpr varname)) ex) cs
+      in foldl1 AppExpr [VarExpr "either", lensToExpr lens ex, handler leftCases, handler rightCases]
+    Just (lens, Just ntname) ->
+      let newCases = map (expandNewtypeCase lens) cases'
+      in casesToExpr (modifyLensExpr lens (VarExpr ("un" ++ ntname)) ex) newCases
 
 infixl 1 ^>>
 
