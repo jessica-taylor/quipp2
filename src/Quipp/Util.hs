@@ -4,6 +4,8 @@ module Quipp.Util where
 import Control.Monad (liftM)
 import Control.Monad.State.Lazy (runState)
 import Debug.Trace
+import Data.Function (on)
+import Data.List (groupBy, sortBy)
 import Data.Random (RandomSource, RVarT, RVar, StdRandom(StdRandom), runRVar, runRVarT, runRVarTWith, stdUniform)
 import qualified Data.Packed.Matrix as Mat
 import Numeric.LinearAlgebra.Algorithms (linearSolve, pinv)

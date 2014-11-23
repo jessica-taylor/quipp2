@@ -1,6 +1,6 @@
 let initState = uniformBool;
 let trans = randFunction unit;
-let obs = \x -> randFunction unit;
+let obs = randFunction unit;
 \un ->
 let x1 = (initState unit : Bool);
 let x2 = (trans x1 : Bool);
