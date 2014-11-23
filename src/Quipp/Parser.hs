@@ -53,33 +53,7 @@ recursiveAdtDefinitionToFunctor (name, params, cases) =
 
 data PatternExpr = VarPExpr String | ConstrPExpr String [PatternExpr] deriving (Eq, Ord, Show)
 
-selectWithEither :: Int -> Int -> Expr -> Expr -> Expr -> Expr
-selectWithEither index numIndices f other x
-  | numIndices == 1 && index == 0 = AppExpr f x
-  | numIndices <= 1 = undefined
-  | index == 0 = foldl1 AppExpr [VarExpr "either", x, f, LambdaExpr varname other]
-  | index > 0 = foldl1 AppExpr [VarExpr "either", LambdaExpr varname other,
-                                LambdaExpr varname (selectWithEither (index - 1) (numIndices - 1) f other (VarExpr varname))]
-  where varname = "__selectWithEither" ++ show index ++ "_" ++ show maxIndex
-
-unpackNestedTuple :: [String] -> Expr -> Expr -> Expr
-unpackNestedTuple vars tup body =
-  foldr (\(i, v) b -> AppExpr (LambdaExpr v b) (AppExpr (VarExpr "fst") $ funPow i (AppExpr (VarExpr "snd")) tup)) body (zip [0..] vars)
-
-tryMatch :: (String -> (Int, Int, Int)) -> Expr -> (PatternExpr, Expr) -> Expr -> Expr
-tryMatch _ ex (VarPExpr v, body) _ =
-  AppExpr (LambdaExpr v body) ex
-tryMatch arity ex (ConstrPExpr constr fields, body) fail =
-  let (index, numConstrs, numFields) = arity constr
-  in if numFields != length fields then undefined
-     else selectWithEither index numConstrs (LambdaExpr varname (tryMatchTuple arity (VarExpr varname) (fields, body) fail)) fail ex
-
-tryMatchTuple :: (String -> (Int, Int, Int)) -> Expr -> ([PatternExpr], Expr)
-
--- how to tell if some matches are exhaustive?
---
-
-data PrimPattenExpr = VarPPExpr String | UnitPPExpr | PairPPExpr PrimPatternExpr PrimPatternExpr | LeftPPExpr PrimPatternExpr | RightPPExpr PrimPatternExpr | NewtypeConstrPPExpr String PrimPatternExpr
+data PrimPatternExpr = VarPPExpr String | UnitPPExpr | PairPPExpr PrimPatternExpr PrimPatternExpr | LeftPPExpr PrimPatternExpr | RightPPExpr PrimPatternExpr | NewtypeConstrPPExpr String PrimPatternExpr
 
 toPrimPat :: (String -> AdtDefinition) -> PatternExpr -> PrimPatternExpr
 toPrimPat _ (VarPExpr s) = VarPPExpr s
