@@ -307,11 +307,12 @@ adtExpr ctx = do
   cases <- adtCase `sepBy` spacedString "|"
   spacedString ";"
   let def = (typeName, paramNames, cases)
+  traceShow def $ return ()
   body <- expr (foldr (uncurry Map.insert) ctx [(c, def) | (c, _) <- cases])
   return $ translateNonRecursiveAdtDefinition def body
 
 
-expr ctx = try (letExpr ctx) <|> try (lambdaExpr ctx) <|> try (ofTypeExpr ctx)
-           <|> try (newTypeExpr ctx) <|> try (adtExpr ctx)
+expr ctx = try (letExpr ctx) <|> try (defExpr ctx) <|> try (lambdaExpr ctx) <|> try (ofTypeExpr ctx)
+           <|> try (newTypeExpr ctx) <|> try (adtExpr ctx) <|> try (caseExpr ctx)
 
 toplevel = spaces >> expr Map.empty

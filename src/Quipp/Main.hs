@@ -23,7 +23,7 @@ import Quipp.ParamInference
 
 main = do
   -- contents <- readFile "examples/1d_clustering.quipp"
-  contents <- readFile "examples/hmm.quipp"
+  contents <- readFile "examples/adts.quipp"
   let resultExpr =
         case parse toplevel "FILE" contents of
           Left err -> error $ show err
@@ -37,7 +37,7 @@ main = do
   print resultExpr
   print typed
   let (AppTExpr (AppTExpr (ConstTExpr "->") _) t) = fst typed
-  (actualParams, actualLatents, samples, iters) <- sampleRVar $ inferParameters (ParamInferenceOptions {optsNumSamples = 200}) t builder
+  (actualParams, actualLatents, samples, iters) <- sampleRVar $ inferParameters (ParamInferenceOptions {optsNumSamples = 20}) t builder
   putStrLn $ "ACTUAL PARAMS: " ++ show actualParams
   putStrLn $ "ACTUAL LATENTS: " ++ show actualLatents
   putStrLn $ "SAMPLES: " ++ show samples

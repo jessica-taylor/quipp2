@@ -32,7 +32,7 @@ instance Show TypeExpr where
 type NewTypeDefinition = (String, [String], TypeExpr)
 
 -- Expressions annotated by type.
-data AnnotatedExprBody = VarAExpr String | LambdaAExpr String TypeExpr AnnotatedExpr | AppAExpr AnnotatedExpr AnnotatedExpr | DefAExpr String AnnotatedExpr AnnotatedExpr | LiteralAExpr Value deriving (Eq, Ord, Show)
+data AnnotatedExprBody = VarAExpr String | LambdaAExpr String TypeExpr AnnotatedExpr | AppAExpr AnnotatedExpr AnnotatedExpr | DefAExpr String AnnotatedExpr AnnotatedExpr | LiteralAExpr Value | NewTypeAExpr NewTypeDefinition AnnotatedExpr deriving (Eq, Ord, Show)
 
 type AnnotatedExpr = (TypeExpr, AnnotatedExprBody)
 
@@ -188,7 +188,7 @@ simpleValueType (BoolValue _) = ConstTExpr "Bool"
 hindleyMilner :: HindleyMilnerContext -> Expr -> TypeCheck AnnotatedExpr
 
 -- hindleyMilner _ x | traceShow x False = undefined
-hindleyMilner ctx x = pushTypeCheckStack ("hindleyMilner " ++ show x) $ hindleyMilner' ctx x
+hindleyMilner ctx x = pushTypeCheckStack ("hindleyMilner " ++ show x ++ " # " ++ show (Map.keys $ fst ctx)) $ hindleyMilner' ctx x
 
 hindleyMilner' :: HindleyMilnerContext -> Expr -> TypeCheck AnnotatedExpr
 
@@ -223,12 +223,15 @@ hindleyMilner' ctx@(varctx, typectx) (DefExpr var value body) = do
 
 hindleyMilner' ctx (LiteralExpr lit) = return (simpleValueType lit, LiteralAExpr lit)
 
-hindleyMilner' (varctx, typectx) (NewTypeExpr (typeName, typeArgs, innerType) body) =
+hindleyMilner' (varctx, typectx) (NewTypeExpr defn@(typeName, typeArgs, innerType) body) =
   -- TODO: must be functor?
   let wrappedType = foldl AppTExpr (ConstTExpr typeName) (map VarTExpr typeArgs)
       varctx' = Map.insert typeName (cloneWithNewVars $ functionType innerType wrappedType) varctx
       varctx'' = Map.insert ("un" ++ typeName) (cloneWithNewVars $ functionType wrappedType innerType) varctx'
-  in hindleyMilner (varctx'', typectx) body
+      idFun t u = (functionType t u, LambdaAExpr "a" t (u, VarAExpr "b"))
+  in do
+    bodyAExpr@(bodyType, _) <- hindleyMilner (varctx'', typectx) body
+    return (bodyType, NewTypeAExpr defn bodyAExpr)
 
 typeInfer :: HindleyMilnerContext -> Expr -> Either String AnnotatedExpr
 typeInfer ctx expr = case runStateT (runReaderT (hindleyMilner ctx expr >>= reduceTypesInAnnotatedExpr) []) (Map.empty, 0) of
@@ -335,6 +338,11 @@ interpretExpr m nts (t, LiteralAExpr value) = do
   var <- newVar (expFamForType t)
   newConstFactor var value
   return $ VarGraphValue var
+
+interpretExpr m nts (_, NewTypeAExpr defn@(typeName, typeArgs, innerType) body) = do
+  let wrappedType = foldl AppTExpr (ConstTExpr typeName) (map VarTExpr typeArgs)
+  let idFun = const2 $ return $ LambdaGraphValue $ \x -> return x
+  interpretExpr (Map.insert typeName idFun $ Map.insert ("un" ++ typeName) idFun m) (Map.insert typeName defn nts) body
 
 notVar :: VarId -> GraphBuilder Value VarId
 notVar x = do
