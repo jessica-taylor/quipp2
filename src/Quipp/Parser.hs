@@ -36,7 +36,7 @@ translateNonRecursiveAdtDefinition (name, params, cases) body =
   let pairExpr x y = AppExpr (AppExpr (VarExpr "pair") x) y
       leftExpr = AppExpr (VarExpr "left")
       rightExpr = AppExpr (VarExpr "right")
-      getConstr i ts = foldr LambdaExpr (rightsAndLeft $ foldr pairExpr (VarExpr "unit") (map VarExpr vars)) vars
+      getConstr i ts = foldr LambdaExpr (AppExpr (VarExpr name) $ rightsAndLeft $ foldr pairExpr (VarExpr "unit") (map VarExpr vars)) vars
         where vars = take (length ts) varList
               rightsAndLeft | i == length cases - 1 = funPow i rightExpr
                             | otherwise = leftExpr . funPow i rightExpr
@@ -141,7 +141,9 @@ fullyExpandedMatch ex (VarPPExpr v, body) = AppExpr (LambdaExpr v body) ex
 fullyExpandedMatch ex (PairPPExpr f s, body) =
   fullyExpandedMatch (AppExpr (VarExpr "fst") ex)
     (f, fullyExpandedMatch (AppExpr (VarExpr "snd") ex) (s, body))
-fullyExpandedMatch _ (other, _) = undefined
+fullyExpandedMatch ex (UnitPPExpr, body) = body
+fullyExpandedMatch ex (other, body) =
+  error $ "Cannot fully expand match " ++ show ex ++ " with " ++ show (other, body)
 
 casesToExpr :: Expr -> [(PrimPatternExpr, Expr)] -> Expr
 casesToExpr ex cases =

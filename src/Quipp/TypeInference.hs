@@ -37,7 +37,16 @@ data AnnotatedExprBody = VarAExpr String | LambdaAExpr String TypeExpr Annotated
 type AnnotatedExpr = (TypeExpr, AnnotatedExprBody)
 
 -- Un-annotated expressions.
-data Expr = VarExpr String | WithTypeExpr Expr TypeExpr | LambdaExpr String Expr | AppExpr Expr Expr | DefExpr String Expr Expr | LiteralExpr Value | NewTypeExpr NewTypeDefinition Expr deriving (Eq, Ord, Show)
+data Expr = VarExpr String | WithTypeExpr Expr TypeExpr | LambdaExpr String Expr | AppExpr Expr Expr | DefExpr String Expr Expr | LiteralExpr Value | NewTypeExpr NewTypeDefinition Expr deriving (Eq, Ord)
+
+instance Show Expr where
+  show (VarExpr s) = s
+  show (WithTypeExpr e t) = "(" ++ show e ++ " : " ++ show t ++ ")"
+  show (LambdaExpr v b) = "(\\" ++ v ++ " -> " ++ show b ++ ")"
+  show (AppExpr f a) = "(" ++ show f ++ " " ++ show a ++ ")"
+  show (DefExpr s v b) = "def " ++ s ++ " = " ++ show v ++ "; " ++ show b
+  show (LiteralExpr v) = show v
+  show (NewTypeExpr (name, params, inner) body) = "newtype " ++ unwords (name : params) ++ " = " ++ show inner ++ "; " ++ show body
 
 type TypeId = Int
 
