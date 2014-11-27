@@ -1,4 +1,5 @@
+data P a b = MakeP a b;
 let fun = randFunction unit;
 \un ->
 let b = uniformBool unit;
-pair b (fun b : Pair Double Double)
+pair b (fun b : P Double Double)
