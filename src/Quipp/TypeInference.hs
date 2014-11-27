@@ -22,12 +22,12 @@ import Quipp.Value
 data TypeExpr = VarTExpr String | ConstTExpr String | AppTExpr TypeExpr TypeExpr deriving (Eq, Ord)
 
 instance Show TypeExpr where
-  show (VarTExpr v) = v
-  show (ConstTExpr s) = s
-  show (AppTExpr (AppTExpr (ConstTExpr "->") a) r) =
-    "(" ++ show a ++ " -> " ++ show r ++ ")"
-  show (AppTExpr a b) =
-    "(" ++ show a ++ " " ++ show b ++ ")"
+  showsPrec _ (VarTExpr v) = showString v
+  showsPrec _ (ConstTExpr s) = showString s
+  showsPrec p (AppTExpr (AppTExpr (ConstTExpr "->") a) r) =
+    showParen (p > 5) $ showsPrec 6 a . showString " -> " . showsPrec 5 r
+  showsPrec p (AppTExpr a b) =
+    showParen (p > 10) $ showsPrec 10 a . showString " " . showsPrec 11 b
 
 type NewTypeDefinition = (String, [String], TypeExpr)
 
@@ -40,13 +40,20 @@ type AnnotatedExpr = (TypeExpr, AnnotatedExprBody)
 data Expr = VarExpr String | WithTypeExpr Expr TypeExpr | LambdaExpr String Expr | AppExpr Expr Expr | DefExpr String Expr Expr | LiteralExpr Value | NewTypeExpr NewTypeDefinition Expr deriving (Eq, Ord)
 
 instance Show Expr where
-  show (VarExpr s) = s
-  show (WithTypeExpr e t) = "(" ++ show e ++ " : " ++ show t ++ ")"
-  show (LambdaExpr v b) = "(\\" ++ v ++ " -> " ++ show b ++ ")"
-  show (AppExpr f a) = "(" ++ show f ++ " " ++ show a ++ ")"
-  show (DefExpr s v b) = "def " ++ s ++ " = " ++ show v ++ "; " ++ show b
-  show (LiteralExpr v) = show v
-  show (NewTypeExpr (name, params, inner) body) = "newtype " ++ unwords (name : params) ++ " = " ++ show inner ++ "; " ++ show body
+  showsPrec _ (VarExpr v) = showString v
+  showsPrec p (LiteralExpr v) = showsPrec p v
+  showsPrec p (WithTypeExpr e t) =
+    showParen (p > 3) $ showsPrec 1 e . showString " : " . showsPrec 3 t
+  showsPrec p (LambdaExpr v b) =
+    showParen (p > 1) $ showString "\\" . showString v . showString " -> " . showsPrec 1 b
+  showsPrec p (AppExpr (LambdaExpr s b) v) =
+    showParen (p > 1) $ showString "let " . showString s . showString " = " . showsPrec 0 v . showString ";\n" . showsPrec 0 b
+  showsPrec p (AppExpr a b) =
+    showParen (p > 10) $ showsPrec 10 a . showString " " . showsPrec 11 b
+  showsPrec p (DefExpr s v b) =
+    showParen (p > 1) $ showString "def " . showString s . showString " = " . showsPrec 0 v . showString ";\n" . showsPrec 0 b
+  showsPrec p (NewTypeExpr (name, params, inner) body) =
+    showParen (p > 1) $ showString "newtype " . showString (unwords (name : params)) . showString " = " . showsPrec 0 inner . showString ";\n" . showsPrec 0 body
 
 type TypeId = Int
 
@@ -94,11 +101,13 @@ reduceTypesInAnnotatedExpr :: AnnotatedExpr -> TypeCheck AnnotatedExpr
 reduceTypesInAnnotatedExpr (t, abody) = do
   t' <- reduceTypeDeep t
   abody' <- case abody of
+    VarAExpr _ -> return abody
+    LiteralAExpr _ -> return abody
     LambdaAExpr param typ body ->
       LambdaAExpr param <$> reduceTypeDeep typ <*> reduceTypesInAnnotatedExpr body
     AppAExpr fun arg -> AppAExpr <$> reduceTypesInAnnotatedExpr fun <*> reduceTypesInAnnotatedExpr arg
     DefAExpr var value body -> DefAExpr var <$> reduceTypesInAnnotatedExpr value <*> reduceTypesInAnnotatedExpr body
-    other -> return other
+    NewTypeAExpr def body -> NewTypeAExpr def <$> reduceTypesInAnnotatedExpr body
   return (t', abody')
 
 varOccursInReduced :: String -> TypeExpr -> TypeCheck Bool
@@ -202,7 +211,7 @@ hindleyMilner ctx x = pushTypeCheckStack ("hindleyMilner " ++ show x ++ " # " ++
 hindleyMilner' :: HindleyMilnerContext -> Expr -> TypeCheck AnnotatedExpr
 
 hindleyMilner' (vars, _) (VarExpr v) = case Map.lookup v vars of
-  Nothing -> typeError $ "Unknown variable "
+  Nothing -> typeError $ "Unknown variable " ++ show v
   Just getT -> do
     t <- getT
     return (t, VarAExpr v)
@@ -220,10 +229,12 @@ hindleyMilner' (varctx, typectx) (LambdaExpr var body) = do
 hindleyMilner' ctx (AppExpr fun arg) = do
   funAExpr@(funType, _) <- hindleyMilner ctx fun
   argAExpr@(argType, _) <- hindleyMilner ctx arg
+  funType' <- reduceTypeDeep funType
   argType' <- reduceTypeDeep argType
-  resultType <- newVarType "app_result"
-  unify funType (functionType argType resultType)
-  return (resultType, AppAExpr funAExpr argAExpr)
+  pushTypeCheckStack ("in application, " ++ show fun ++ " : " ++ show funType' ++ " **and** " ++ show arg ++ " : " ++ show argType') $ do
+    resultType <- newVarType "app_result"
+    unify funType' (functionType argType' resultType)
+    return (resultType, AppAExpr funAExpr argAExpr)
 
 hindleyMilner' ctx@(varctx, typectx) (DefExpr var value body) = do
   valueAExpr@(valueType, _) <- hindleyMilner ctx value
@@ -324,7 +335,7 @@ expFamForType t = error $ "Can't get exponential family for type " ++ show t
 
 interpretExpr :: Map String (TypeExpr -> Map String NewTypeDefinition -> GraphBuilder Value GraphValue) -> Map String NewTypeDefinition -> AnnotatedExpr -> GraphBuilder Value GraphValue
 
--- interpretExpr _ _ x | trace ("interpret " ++ show x) False = undefined
+interpretExpr _ _ x | trace ("\ninterpret " ++ show x) False = undefined
 
 interpretExpr m nts (typ, VarAExpr var) = case Map.lookup var m of
   Nothing -> error ("cannot find variable " ++ var)
@@ -339,9 +350,8 @@ interpretExpr m nts (_, AppAExpr fun arg) = do
     LambdaGraphValue f -> interpretExpr m nts arg >>= f
     _ -> error "Function in application expression is not actually a function"
 
-interpretExpr m nts (_, DefAExpr var value body) = do
-  val <- interpretExpr m nts value
-  interpretExpr (Map.insert var (const2 $ return val) m) nts body
+interpretExpr m nts (_, DefAExpr var (_, value) body) = do
+  interpretExpr (Map.insert var (\t _ -> trace ("\nTTT: " ++ show t) $ interpretExpr m nts (t, value)) m) nts body
 
 interpretExpr m nts (t, LiteralAExpr value) = do
   var <- newVar (expFamForType t)
@@ -559,10 +569,16 @@ defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b >>= cloneWithNewVars, 
   ("mu",
    do f <- newVarType "mu_f"
       return $ functionType (AppTExpr f (muType f)) (muType f),
-   \(AppTExpr (AppTExpr (ConstTExpr "->") (AppTExpr (ConstTExpr functorName) _)) _) ->
-   \nts -> case Map.lookup functorName nts of
-             Nothing -> error ("No newtype " ++ functorName)
-             Just def -> return $ LambdaGraphValue (return . MuGraphValue def)
+   \thisType -> case thisType of
+     (AppTExpr (AppTExpr (ConstTExpr "->") (AppTExpr functorType _)) _) ->
+       let typeHead (ConstTExpr t) = t
+           typeHead (AppTExpr t _) = typeHead t
+           typeHead other = error ("Mu cannot have type " ++ show thisType)
+           functorName = typeHead functorType
+       in \nts -> case Map.lookup functorName nts of
+                    Nothing -> error ("No newtype " ++ functorName)
+                    Just def -> return $ LambdaGraphValue (return . MuGraphValue def)
+     _ -> error ("Mu cannot have type " ++ show thisType)
   ),
   ("unMu",
    do f <- newVarType "unMu_f"

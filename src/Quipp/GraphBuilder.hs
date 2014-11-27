@@ -117,6 +117,11 @@ conditionEqual v1 v2 = do
     }
   return v1
 
+-- data GraphArrow a b = forall c. GraphArrow (a -> GraphBuilder c) ((VarId -> Value) -> c -> b)
+-- 
+-- instance Arrow GraphArrow where
+--   arr f = GraphArrow return (const f)
+
 {-
 f <- newRandFun gaussianExpFam [categoricalExpFam 2]
 clusters <- replicateM 10 (newVar (catgeoricalExpFam 2))

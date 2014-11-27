@@ -32,6 +32,7 @@ varList = ["x_" ++ show i | i <- [0..]]
 type ParseContext = Map String AdtDefinition
 
 translateNonRecursiveAdtDefinition :: AdtDefinition -> Expr -> Expr
+translateNonRecursiveAdtDefinition (name, params, cases) body | trace ("\nCASES: " ++ show cases )False = undefined
 translateNonRecursiveAdtDefinition (name, params, cases) body =
   let pairExpr x y = AppExpr (AppExpr (VarExpr "pair") x) y
       leftExpr = AppExpr (VarExpr "left")
@@ -63,8 +64,8 @@ toPrimPat _ (VarPExpr s) = VarPPExpr s
 toPrimPat constrDef (ConstrPExpr constr fields) =
   let (adtName, _, adtCases) = constrDef constr
       caseIndex = fromJust $ findIndex ((== constr) . fst) adtCases
-      leftsAndRight | caseIndex == length adtCases - 1 = funPow caseIndex LeftPPExpr
-                    | otherwise = RightPPExpr . funPow caseIndex LeftPPExpr
+      leftsAndRight | caseIndex == length adtCases - 1 = funPow caseIndex RightPPExpr
+                    | otherwise = LeftPPExpr . funPow caseIndex RightPPExpr
   in NewtypeConstrPPExpr adtName $ leftsAndRight $ foldr PairPPExpr UnitPPExpr $ map (toPrimPat constrDef) fields
 
 primPatImplies :: PrimPatternExpr -> PrimPatternExpr -> Bool
@@ -108,6 +109,7 @@ pointToAnyExpandable :: [PrimPatternExpr] -> Maybe (PrimPatternLens, Maybe Strin
 pointToAnyExpandable = foldl1 mplus . map pointToExpandable
 
 partitionCase :: PrimPatternLens -> (PrimPatternExpr, Expr) -> ([(PrimPatternExpr, Expr)], [(PrimPatternExpr, Expr)])
+partitionCase lens x | trace ("\nPC: " ++ show lens ++ " " ++ show x) False = undefined
 partitionCase lens (VarPPExpr v, body) =
   let part f = [(VarPPExpr v, AppExpr (LambdaExpr v body) $ modifyLensExpr lens (VarExpr f) (VarExpr v))]
   in (part "left", part "right")
@@ -145,19 +147,19 @@ fullyExpandedMatch ex (UnitPPExpr, body) = body
 fullyExpandedMatch ex (other, body) =
   error $ "Cannot fully expand match " ++ show ex ++ " with " ++ show (other, body)
 
-casesToExpr :: Expr -> [(PrimPatternExpr, Expr)] -> Expr
-casesToExpr ex cases =
+casesToExpr :: Int -> Expr -> [(PrimPatternExpr, Expr)] -> Expr
+casesToExpr depth ex cases =
   let cases' = removeRedundantCases cases
-      varname = "__casesToExpr_" ++ show cases in
+      varname = "__cases_to_expr_" ++ show depth in
   case pointToAnyExpandable (map fst cases') of
     Nothing -> fullyExpandedMatch ex (head cases')
     Just (lens, Nothing) ->
       let (leftCases, rightCases) = partitionCases lens cases'
-          handler cs = LambdaExpr varname $ casesToExpr (modifyLensExpr lens (LambdaExpr "__ignored" (VarExpr varname)) ex) cs
-      in foldl1 AppExpr [VarExpr "either", lensToExpr lens ex, handler leftCases, handler rightCases]
+          handler cs = LambdaExpr varname $ casesToExpr (depth + 1) (modifyLensExpr lens (LambdaExpr "__ignored" (VarExpr varname)) ex) cs
+      in trace ("\nLRC: " ++ show (leftCases, rightCases)) $ foldl1 AppExpr [VarExpr "either", lensToExpr lens ex, handler leftCases, handler rightCases]
     Just (lens, Just ntname) ->
       let newCases = map (expandNewtypeCase lens ntname) cases'
-      in casesToExpr (modifyLensExpr lens (VarExpr ("un" ++ ntname)) ex) newCases
+      in casesToExpr (depth + 1) (modifyLensExpr lens (VarExpr ("un" ++ ntname)) ex) newCases
 
 infixl 1 ^>>
 
@@ -292,12 +294,12 @@ caseExpr ctx = do
   spacedString "{"
   cases <- many (singleCaseExpr ctx)
   spacedString "}"
-  return $ casesToExpr value cases
+  return $ casesToExpr 0 value cases
 
 
 adtCase = do
   constr <- upperId
-  fields <- many typeExpr
+  fields <- many atomTypeExpr
   return (constr, fields)
 
 adtExpr ctx = do
@@ -309,7 +311,7 @@ adtExpr ctx = do
   cases <- adtCase `sepBy` spacedString "|"
   spacedString ";"
   let def = (typeName, paramNames, cases)
-  traceShow def $ return ()
+  trace ("DATA: " ++ show def) $ return ()
   body <- expr (foldr (uncurry Map.insert) ctx [(c, def) | (c, _) <- cases])
   return $ translateNonRecursiveAdtDefinition def body
 
