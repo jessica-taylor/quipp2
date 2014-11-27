@@ -1,4 +1,4 @@
-{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TupleSections, ViewPatterns #-}
 
 module Quipp.TypeInference where
 
@@ -18,6 +18,7 @@ import Quipp.ExpFam
 import Quipp.Factor
 import Quipp.GraphBuilder
 import Quipp.Value
+import Quipp.Util
 
 data TypeExpr = VarTExpr String | ConstTExpr String | AppTExpr TypeExpr TypeExpr deriving (Eq, Ord)
 
@@ -66,6 +67,11 @@ pairType a b = AppTExpr (AppTExpr (ConstTExpr "Pair") a) b
 eitherType a b = AppTExpr (AppTExpr (ConstTExpr "Either") a) b
 muType f = AppTExpr (ConstTExpr "Mu") f
 
+splitAppType :: TypeExpr -> (TypeExpr, [TypeExpr])
+splitAppType (AppTExpr a b) =
+  let (head, args) = splitAppType a in (head, args ++ [b])
+splitAppType other = (other, [])
+
 newTypeId :: String -> TypeCheck String
 newTypeId str = do
   (m, tid) <- lift get
@@ -82,20 +88,27 @@ pushTypeCheckStack s = local (s:)
 
 newVarType = liftM VarTExpr . newTypeId
 
+reduceTypeShallowIn :: Map String TypeExpr -> TypeExpr -> TypeExpr
+
+reduceTypeShallowIn m t@(VarTExpr v) = case Map.lookup v m of
+  Nothing -> t
+  Just t' -> reduceTypeShallowIn m t'
+reduceTypeShallowIn _ other = other
+
 reduceTypeShallow :: TypeExpr -> TypeCheck TypeExpr
-reduceTypeShallow t@(VarTExpr v) = do
+reduceTypeShallow t = do
   (m, _) <- lift get
-  case Map.lookup v m of
-    Nothing -> return t
-    Just t' -> reduceTypeShallow t'
-reduceTypeShallow other = return other
+  return (reduceTypeShallowIn m t)
+
+reduceTypeDeepIn :: Map String TypeExpr -> TypeExpr -> TypeExpr
+reduceTypeDeepIn m t = case reduceTypeShallowIn m t of
+  AppTExpr fun arg -> AppTExpr (reduceTypeDeepIn m fun) (reduceTypeDeepIn m arg)
+  other -> other
 
 reduceTypeDeep :: TypeExpr -> TypeCheck TypeExpr
 reduceTypeDeep t = do
-  t' <- reduceTypeShallow t
-  case t' of
-    AppTExpr fun arg -> AppTExpr <$> reduceTypeDeep fun <*> reduceTypeDeep arg
-    other -> return other
+  (m, _) <- lift get
+  return (reduceTypeDeepIn m t)
 
 reduceTypesInAnnotatedExpr :: AnnotatedExpr -> TypeCheck AnnotatedExpr
 reduceTypesInAnnotatedExpr (t, abody) = do
@@ -112,9 +125,8 @@ reduceTypesInAnnotatedExpr (t, abody) = do
 
 varOccursInReduced :: String -> TypeExpr -> TypeCheck Bool
 varOccursInReduced v (VarTExpr v') = return $ v == v'
-varOccursInReduced v (AppTExpr a b) = do 
-  aocc <- varOccursIn v a
-  if aocc then return True else varOccursIn v b
+varOccursInReduced v (AppTExpr a b) =
+  (||) <$> varOccursIn v a <*> varOccursIn v b
 varOccursInReduced v other = return False
 
 varOccursIn v x = reduceTypeShallow x >>= varOccursInReduced v
@@ -143,8 +155,6 @@ unifyReduced a b = typeError $ "Unification failed: " ++ show a ++ ", " ++ show 
 unify :: TypeExpr -> TypeExpr -> TypeCheck ()
 
 unify a b = do
-  -- a' <- reduceTypeShallow a
-  -- b' <- reduceTypeShallow b
   a' <- reduceTypeDeep a
   b' <- reduceTypeDeep b
   pushTypeCheckStack ("unify " ++ show a' ++ ", " ++ show b') $ unifyReduced a' b'
@@ -205,8 +215,7 @@ simpleValueType (BoolValue _) = ConstTExpr "Bool"
 
 hindleyMilner :: HindleyMilnerContext -> Expr -> TypeCheck AnnotatedExpr
 
--- hindleyMilner _ x | traceShow x False = undefined
-hindleyMilner ctx x = pushTypeCheckStack ("hindleyMilner " ++ show x ++ " # " ++ show (Map.keys $ fst ctx)) $ hindleyMilner' ctx x
+hindleyMilner ctx x = pushTypeCheckStack ("hindleyMilner " ++ show x) $ hindleyMilner' ctx x
 
 hindleyMilner' :: HindleyMilnerContext -> Expr -> TypeCheck AnnotatedExpr
 
@@ -295,23 +304,6 @@ freezeGraphValue f (PureLeftGraphValue l) = FLeftGraphValue (freezeGraphValue f 
 freezeGraphValue f (PureRightGraphValue r) = FRightGraphValue (freezeGraphValue f r)
 freezeGraphValue f (MuGraphValue def v) = FMuGraphValue def (freezeGraphValue f v)
 freezeGraphValue _ other = error "Cannot freeze lambdas"
-
--- unfreezeGraphValue :: TypeExpr -> FrozenGraphValue -> GraphBuilder Value GraphValue
--- unfreezeGraphValue _ FUnitGraphValue = return UnitGraphValue
--- unfreezeGraphValue t (FValueGraphValue value) = 
---   trace ("t " ++ show t ++ " value " ++ show value) $ VarGraphValue <$> constValue (expFamForType t) value
--- unfreezeGraphValue (AppTExpr (AppTExpr (ConstTExpr "Pair") firstType) secondType) (FPairGraphValue a b) =
---   trace ("pair " ++ show firstType ++ ";" ++ show secondType ++ "#" ++ show a ++ ";" ++ show b)
---   PairGraphValue <$> unfreezeGraphValue firstType a <*> unfreezeGraphValue secondType b
--- unfreezeGraphValue
---   (AppTExpr (AppTExpr (ConstTExpr "Either") leftType) rightType)
---   (FLeftGraphValue value) = PureLeftGraphValue <$> unfreezeGraphValue leftType value
--- unfreezeGraphValue
---   (AppTExpr (AppTExpr (ConstTExpr "Either") leftType) rightType)
---   (FRightGraphValue value) = PureRightGraphValue <$> unfreezeGraphValue rightType value
--- unfreezeGraphValue (AppTExpr (ConstTExpr "Mu") functorType) (FMuGraphValue def v) =
---   MuGraphValue def <$> unfreezeGraphValue (AppTExpr functorType (muType functorType)) v
--- unfreezeGraphValue t other = error ("Cannot freeze " ++ show other ++ " : " ++ show t)
 
 unfreezeGraphValue :: FrozenGraphValue -> GraphBuilder Value GraphValue
 unfreezeGraphValue FUnitGraphValue = return UnitGraphValue
@@ -453,14 +445,20 @@ unifyGraphValues (MuGraphValue _ v1) (MuGraphValue _ v2) = unifyGraphValues v1 v
 unifyGraphValues _ _ = error ("Cannot unify functions")
 
 
-typeToExpFams :: TypeExpr -> [ExpFam Value]
-typeToExpFams (ConstTExpr "Unit") = []
-typeToExpFams t@(ConstTExpr _) = [expFamForType t]
-typeToExpFams (AppTExpr (AppTExpr (ConstTExpr "Pair") a) b) =
-  typeToExpFams a ++ typeToExpFams b
-typeToExpFams (AppTExpr (AppTExpr (ConstTExpr "Either") a) b) =
-  [boolValueExpFam] ++ typeToExpFams a ++ typeToExpFams b
-typeToExpFams other = error ("Cannot get exponential family for type: " ++ show other)
+typeToExpFams :: Map String NewTypeDefinition -> TypeExpr -> [ExpFam Value]
+typeToExpFams _ (ConstTExpr "Unit") = []
+typeToExpFams _ t@(ConstTExpr _) = [expFamForType t]
+typeToExpFams nts (AppTExpr (AppTExpr (ConstTExpr "Pair") a) b) =
+  typeToExpFams nts a ++ typeToExpFams nts b
+typeToExpFams nts (AppTExpr (AppTExpr (ConstTExpr "Either") a) b) =
+  [boolValueExpFam] ++ typeToExpFams nts a ++ typeToExpFams nts b
+typeToExpFams nts (splitAppType -> (ConstTExpr newTypeName, params)) =
+  case Map.lookup newTypeName nts of
+    Nothing -> error ("Unknown type " ++ newTypeName)
+    Just (_, paramVars, inner) ->
+      let inner' = reduceTypeDeepIn (foldr (uncurry Map.insert) Map.empty (zipSameLength paramVars params)) inner
+      in typeToExpFams nts inner'
+typeToExpFams _ other = error ("Cannot get exponential family for type: " ++ show other)
 
 graphValueEmbeddedVars :: GraphValue -> [VarId]
 graphValueEmbeddedVars UnitGraphValue = []
@@ -475,23 +473,31 @@ graphValueEmbeddedVars (PureRightGraphValue a) = graphValueEmbeddedVars a
 graphValueEmbeddedVars (LambdaGraphValue _) =
   error "Cannot get embedded variables in LambdaGraphValue"
 
-varsToGraphValue' :: TypeExpr -> State [VarId] GraphValue
-varsToGraphValue' (ConstTExpr "Unit") = return UnitGraphValue
-varsToGraphValue' (ConstTExpr x) | elem x ["Bool", "Double"] = do
+varsToGraphValue' :: Map String NewTypeDefinition -> TypeExpr -> State [VarId] GraphValue
+varsToGraphValue' _ (ConstTExpr "Unit") = return UnitGraphValue
+varsToGraphValue' _ (ConstTExpr x) | elem x ["Bool", "Double"] = do
   (v:vs) <- get
   put vs
   return $ VarGraphValue v
-varsToGraphValue' (AppTExpr (AppTExpr (ConstTExpr "Pair") a) b) =
-  PairGraphValue <$> varsToGraphValue' a <*> varsToGraphValue' b
-varsToGraphValue' (AppTExpr (AppTExpr (ConstTExpr "Either") a) b) = do
+varsToGraphValue' nts (AppTExpr (AppTExpr (ConstTExpr "Pair") a) b) =
+  PairGraphValue <$> varsToGraphValue' nts a <*> varsToGraphValue' nts b
+varsToGraphValue' nts (AppTExpr (AppTExpr (ConstTExpr "Either") a) b) = do
   (v:vs) <- get
   put vs
-  EitherGraphValue v <$> varsToGraphValue' a <*> varsToGraphValue' b
-varsToGraphValue' other =
+  EitherGraphValue v <$> varsToGraphValue' nts a <*> varsToGraphValue' nts b
+varsToGraphValue' nts (splitAppType -> (ConstTExpr newTypeName, params)) =
+  case Map.lookup newTypeName nts of
+    Nothing -> error ("Unknown type " ++ newTypeName)
+    Just (_, paramVars, inner) ->
+      let inner' = reduceTypeDeepIn (foldr (uncurry Map.insert) Map.empty (zipSameLength paramVars params)) inner
+      in varsToGraphValue' nts inner'
+  
+  
+varsToGraphValue' _ other =
   error ("Cannot get graph value for type: " ++ show other)
 
-varsToGraphValue :: TypeExpr -> [VarId] -> GraphValue
-varsToGraphValue t vars = case runState (varsToGraphValue' t) vars of
+varsToGraphValue :: Map String NewTypeDefinition -> TypeExpr -> [VarId] -> GraphValue
+varsToGraphValue nts t vars = case runState (varsToGraphValue' nts t) vars of
   (result, []) -> result
   other -> error $ "Too many variables (" ++ show (length vars) ++ ") for type " ++ show t
 
@@ -571,13 +577,12 @@ defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b >>= cloneWithNewVars, 
       return $ functionType (AppTExpr f (muType f)) (muType f),
    \thisType -> case thisType of
      (AppTExpr (AppTExpr (ConstTExpr "->") (AppTExpr functorType _)) _) ->
-       let typeHead (ConstTExpr t) = t
-           typeHead (AppTExpr t _) = typeHead t
-           typeHead other = error ("Mu cannot have type " ++ show thisType)
-           functorName = typeHead functorType
-       in \nts -> case Map.lookup functorName nts of
+       case splitAppType functorType of
+         (ConstTExpr functorName, _) ->
+          \nts -> case Map.lookup functorName nts of
                     Nothing -> error ("No newtype " ++ functorName)
                     Just def -> return $ LambdaGraphValue (return . MuGraphValue def)
+         _ -> error ("Mu cannot have type " ++ show thisType)
      _ -> error ("Mu cannot have type " ++ show thisType)
   ),
   ("unMu",
@@ -614,15 +619,15 @@ defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b >>= cloneWithNewVars, 
   -- ("ifthenelse", return $ functionType (ConstTExpr "Bool") $ functionType (ConstTExpr "Bool") (ConstTExpr "Bool"),
   --  const2 $ return $ LambdaGraphValue $ \(VarGraphValue c) ->
   ("randFunction", return (functionType (ConstTExpr "Unit") $ functionType (VarTExpr "a") $ VarTExpr "b"),
-   \(AppTExpr (AppTExpr (ConstTExpr "->") (ConstTExpr "Unit")) (AppTExpr (AppTExpr (ConstTExpr "->") argType) resType)) _ ->
+   \(AppTExpr (AppTExpr (ConstTExpr "->") (ConstTExpr "Unit")) (AppTExpr (AppTExpr (ConstTExpr "->") argType) resType)) nts ->
      return $ LambdaGraphValue $ \UnitGraphValue -> do
-       let argExpFams = typeToExpFams argType
-           resExpFams = typeToExpFams resType
+       let argExpFams = typeToExpFams nts argType
+           resExpFams = typeToExpFams nts resType
        rfs <- mapM (flip newRandFun argExpFams) resExpFams
        return $ LambdaGraphValue $ \argValue -> do
          let argVars = graphValueEmbeddedVars argValue
          resVars <- mapM (flip newSampleFromRandFun argVars) rfs
-         return $ varsToGraphValue resType resVars),
+         return $ varsToGraphValue nts resType resVars),
   ("boolToDoubleFun", return (functionType (ConstTExpr "Unit") $ functionType (ConstTExpr "Bool") (ConstTExpr "Double")), const2 $ return $ LambdaGraphValue $ \_ -> do
     rf <- newRandFun gaussianValueExpFam [boolValueExpFam]
     return $ LambdaGraphValue $ \(VarGraphValue boolvar) -> liftM VarGraphValue $ newSampleFromRandFun rf [boolvar])

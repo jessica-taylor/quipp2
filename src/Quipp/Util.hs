@@ -40,6 +40,12 @@ negInfinity = read "-Infinity"
 funPow :: Int -> (a -> a) -> a -> a
 funPow n f x = iterate f x !! n
 
+zipWithSameLength f [] [] = []
+zipWithSameLength f (x:xs) (y:ys) = f x y : zipWithSameLength f xs ys
+zipWithSameLength _ _ _ = error "zipWithSameLength: different lengths"
+
+zipSameLength = zipWithSameLength (,)
+
 iterateM :: Monad m => Int -> (a -> m a) -> a -> m [a]
 iterateM 0 _ x = return [x]
 iterateM n f x = liftM (x:) (f x >>= iterateM (n-1) f)
