@@ -1,0 +1,30 @@
+
+
+data NatBuilder a = Zero | Succ a;
+
+def muZero = mu Zero;
+
+def muSucc = \x -> mu (Succ x);
+
+data ListBuilder a b = Nil | Cons a b;
+
+def muCons = \x y -> mu (Cons x y);
+
+def muNil = mu Nil;
+
+let numberList = muCons 1.0 (muCons 2.0 (muCons 3.0 muNil));
+
+def foldr = \f init -> cata (\lst -> case lst { Nil -> init; Cons a b -> f a b; });
+
+def length = foldr (\x n -> muSucc n) muZero;
+
+def copy = foldr muCons muNil numberList;
+
+def len = length numberList;
+
+
+
+data Bool2 = False2 | True2;
+
+let v2 = case False2 { False2 -> 5.0; True2 -> 6.0; };
+\un -> pair len True2

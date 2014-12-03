@@ -1,0 +1,5 @@
+data Bool = False | True;
+data Pair x y = Pair x y;
+data Either x y = Left x | Right y;
+def fst pair = case pair { Pair x y -> x; };
+def snd pair = case pair { Pair x y -> y; };
