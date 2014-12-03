@@ -34,14 +34,14 @@ type ParseContext = Map String AdtDefinition
 translateNonRecursiveAdtDefinition :: AdtDefinition -> Expr -> Expr
 translateNonRecursiveAdtDefinition (name, params, cases) body | trace ("\nCASES: " ++ show cases )False = undefined
 translateNonRecursiveAdtDefinition (name, params, cases) body =
-  let pairExpr x y = AppExpr (AppExpr (VarExpr "pair") x) y
-      leftExpr = AppExpr (VarExpr "left")
-      rightExpr = AppExpr (VarExpr "right")
-      getConstr i ts = foldr LambdaExpr (AppExpr (VarExpr name) $ rightsAndLeft $ foldr pairExpr (VarExpr "unit") (map VarExpr vars)) vars
+  let pairExpr x y = AppExpr (AppExpr (VarExpr "_pair") x) y
+      leftExpr = AppExpr (VarExpr "_left")
+      rightExpr = AppExpr (VarExpr "_right")
+      getConstr i ts = foldr LambdaExpr (AppExpr (VarExpr name) $ rightsAndLeft $ foldr pairExpr (VarExpr "_unit") (map VarExpr vars)) vars
         where vars = take (length ts) varList
               rightsAndLeft | i == length cases - 1 = funPow i rightExpr
                             | otherwise = leftExpr . funPow i rightExpr
-  in NewTypeExpr (name, params, foldr1 eitherType [foldr pairType (ConstTExpr "Unit") ts | (_, ts) <- cases])
+  in NewTypeExpr (name, params, foldr1 eitherType [foldr pairType (ConstTExpr "_Unit") ts | (_, ts) <- cases])
       $ foldr (\(i, (constrName, ts)) -> DefExpr constrName (getConstr i ts)) body (zip [0..] cases)
 
 recursiveAdtDefinitionToFunctor :: AdtDefinition -> AdtDefinition
@@ -85,14 +85,14 @@ removeRedundantCases cases = [(pat, body) | ((pat, body), prevPats) <- zip cases
 type PrimPatternLens = [Bool]
 
 lensToExpr :: PrimPatternLens -> Expr -> Expr
-lensToExpr lens val = foldr (\l -> AppExpr (VarExpr (if l then "snd" else "fst"))) val lens
+lensToExpr lens val = foldr (\l -> AppExpr (VarExpr (if l then "_snd" else "_fst"))) val lens
 
 modifyLensExpr :: PrimPatternLens -> Expr -> Expr -> Expr
 modifyLensExpr [] f x = AppExpr f x
 modifyLensExpr (False:ls) f x =
-  foldl1 AppExpr [VarExpr "pair", modifyLensExpr ls f (AppExpr (VarExpr "fst") x), AppExpr (VarExpr "snd") x]
+  foldl1 AppExpr [VarExpr "_pair", modifyLensExpr ls f (AppExpr (VarExpr "_fst") x), AppExpr (VarExpr "_snd") x]
 modifyLensExpr (True:ls) f x =
-  foldl1 AppExpr [VarExpr "pair", AppExpr (VarExpr "fst") x, modifyLensExpr ls f (AppExpr (VarExpr "snd") x)]
+  foldl1 AppExpr [VarExpr "_pair", AppExpr (VarExpr "_fst") x, modifyLensExpr ls f (AppExpr (VarExpr "_snd") x)]
 
 pointToExpandable :: PrimPatternExpr -> Maybe (PrimPatternLens, Maybe String)
 pointToExpandable (LeftPPExpr _) = return ([], Nothing)
@@ -112,7 +112,7 @@ partitionCase :: PrimPatternLens -> (PrimPatternExpr, Expr) -> ([(PrimPatternExp
 partitionCase lens x | trace ("\nPC: " ++ show lens ++ " " ++ show x) False = undefined
 partitionCase lens (VarPPExpr v, body) =
   let part f = [(VarPPExpr v, AppExpr (LambdaExpr v body) $ modifyLensExpr lens (VarExpr f) (VarExpr v))]
-  in (part "left", part "right")
+  in (part "_left", part "_right")
 partitionCase [] (LeftPPExpr p, body) = ([(p, body)], [])
 partitionCase [] (RightPPExpr p, body) = ([], [(p, body)])
 partitionCase (False:l) (PairPPExpr f s, body) =
@@ -130,7 +130,7 @@ partitionCases lens cases =
 
 expandNewtypeCase :: PrimPatternLens -> String -> (PrimPatternExpr, Expr) -> (PrimPatternExpr, Expr)
 expandNewtypeCase lens constrName (VarPPExpr v, body) =
-  (VarPPExpr v, AppExpr (LambdaExpr v body) $ modifyLensExpr lens (VarExpr constrName) (VarExpr v))
+  (VarPPExpr v, AppExpr (LambdaExpr v body) $ modifyLensExpr lens (VarExpr ("Make" ++ constrName)) (VarExpr v))
 expandNewtypeCase [] constrName (NewtypeConstrPPExpr constrName' p, body)
   | constrName == constrName' = (p, body)
 expandNewtypeCase (False:l) constrName (PairPPExpr f s, body) =
@@ -141,8 +141,8 @@ expandNewtypeCase (True:l) constrName (PairPPExpr f s, body) =
 fullyExpandedMatch :: Expr -> (PrimPatternExpr, Expr) -> Expr
 fullyExpandedMatch ex (VarPPExpr v, body) = AppExpr (LambdaExpr v body) ex
 fullyExpandedMatch ex (PairPPExpr f s, body) =
-  fullyExpandedMatch (AppExpr (VarExpr "fst") ex)
-    (f, fullyExpandedMatch (AppExpr (VarExpr "snd") ex) (s, body))
+  fullyExpandedMatch (AppExpr (VarExpr "_fst") ex)
+    (f, fullyExpandedMatch (AppExpr (VarExpr "_snd") ex) (s, body))
 fullyExpandedMatch ex (UnitPPExpr, body) = body
 fullyExpandedMatch ex (other, body) =
   error $ "Cannot fully expand match " ++ show ex ++ " with " ++ show (other, body)
@@ -156,8 +156,8 @@ casesToExpr depth ex cases =
     Just (lens, Nothing) ->
       let (leftCases, rightCases) = partitionCases lens cases'
           handler cs = LambdaExpr varname $ casesToExpr (depth + 1) (modifyLensExpr lens (LambdaExpr "__ignored" (VarExpr varname)) ex) cs
-      in trace ("\nLRC: " ++ show (leftCases, rightCases)) $ foldl1 AppExpr [VarExpr "either", lensToExpr lens ex, handler leftCases, handler rightCases]
-    Just (lens, Just ntname) ->
+      in trace ("\nLRC: " ++ show (leftCases, rightCases)) $ foldl1 AppExpr [VarExpr "_either", lensToExpr lens ex, handler leftCases, handler rightCases]
+    Just (lens, Just ntname) | take 4 ntname == "Make" ->
       let newCases = map (expandNewtypeCase lens ntname) cases'
       in casesToExpr (depth + 1) (modifyLensExpr lens (VarExpr ("un" ++ ntname)) ex) newCases
 
@@ -187,7 +187,7 @@ stringWithBreak = withBreak . string
 upperId = withBreak ((:) <$> satisfy isUpper <*> many wordChar)
 
 lowerId = withBreak $ do
-  id <- (:) <$> satisfy isLower <*> many wordChar
+  id <- (:) <$> satisfy (\x -> x == '_' || isLower x) <*> many wordChar
   if elem id keywords then fail "Keyword is not an ID" else return id
 
 varTypeExpr = VarTExpr <$> lowerId

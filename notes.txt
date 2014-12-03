@@ -140,3 +140,13 @@ case (foo, bar) of
   (X a b c, Y d e) -> ...
   (X a b c, d) -> ...
   (Y a b, e) -> ...
+
+--------
+
+How to handle non-conjugate-exponential factors?
+Example: c = a > b, a and b are Gaussian
+
+If we are determining c, it's easy
+If we are determining a, we want:
+old distr of a / old message * factor ~= new message * old distr of a / old message
+

@@ -63,8 +63,8 @@ type HindleyMilnerState = (Map String TypeExpr, TypeId)
 type TypeCheck = ReaderT [String] (StateT HindleyMilnerState (Either String))
 
 functionType a b = AppTExpr (AppTExpr (ConstTExpr "->") a) b
-pairType a b = AppTExpr (AppTExpr (ConstTExpr "Pair") a) b
-eitherType a b = AppTExpr (AppTExpr (ConstTExpr "Either") a) b
+pairType a b = AppTExpr (AppTExpr (ConstTExpr "_Pair") a) b
+eitherType a b = AppTExpr (AppTExpr (ConstTExpr "_Either") a) b
 muType f = AppTExpr (ConstTExpr "Mu") f
 
 splitAppType :: TypeExpr -> (TypeExpr, [TypeExpr])
@@ -255,7 +255,7 @@ hindleyMilner' ctx (LiteralExpr lit) = return (simpleValueType lit, LiteralAExpr
 hindleyMilner' (varctx, typectx) (NewTypeExpr defn@(typeName, typeArgs, innerType) body) =
   -- TODO: must be functor?
   let wrappedType = foldl AppTExpr (ConstTExpr typeName) (map VarTExpr typeArgs)
-      varctx' = Map.insert typeName (cloneWithNewVars $ functionType innerType wrappedType) varctx
+      varctx' = Map.insert ("Make" ++ typeName) (cloneWithNewVars $ functionType innerType wrappedType) varctx
       varctx'' = Map.insert ("un" ++ typeName) (cloneWithNewVars $ functionType wrappedType innerType) varctx'
       idFun t u = (functionType t u, LambdaAExpr "a" t (u, VarAExpr "b"))
   in do
@@ -353,7 +353,7 @@ interpretExpr m nts (t, LiteralAExpr value) = do
 interpretExpr m nts (_, NewTypeAExpr defn@(typeName, typeArgs, innerType) body) = do
   let wrappedType = foldl AppTExpr (ConstTExpr typeName) (map VarTExpr typeArgs)
   let idFun = const2 $ return $ LambdaGraphValue $ \x -> return x
-  interpretExpr (Map.insert typeName idFun $ Map.insert ("un" ++ typeName) idFun m) (Map.insert typeName defn nts) body
+  interpretExpr (Map.insert ("Make" ++ typeName) idFun $ Map.insert ("un" ++ typeName) idFun m) (Map.insert typeName defn nts) body
 
 notVar :: VarId -> GraphBuilder Value VarId
 notVar x = do
@@ -448,9 +448,9 @@ unifyGraphValues _ _ = error ("Cannot unify functions")
 typeToExpFams :: Map String NewTypeDefinition -> TypeExpr -> [ExpFam Value]
 typeToExpFams _ (ConstTExpr "Unit") = []
 typeToExpFams _ t@(ConstTExpr _) = [expFamForType t]
-typeToExpFams nts (AppTExpr (AppTExpr (ConstTExpr "Pair") a) b) =
+typeToExpFams nts (AppTExpr (AppTExpr (ConstTExpr "_Pair") a) b) =
   typeToExpFams nts a ++ typeToExpFams nts b
-typeToExpFams nts (AppTExpr (AppTExpr (ConstTExpr "Either") a) b) =
+typeToExpFams nts (AppTExpr (AppTExpr (ConstTExpr "_Either") a) b) =
   [boolValueExpFam] ++ typeToExpFams nts a ++ typeToExpFams nts b
 typeToExpFams nts (splitAppType -> (ConstTExpr newTypeName, params)) =
   case Map.lookup newTypeName nts of
@@ -479,9 +479,9 @@ varsToGraphValue' _ (ConstTExpr x) | elem x ["Bool", "Double"] = do
   (v:vs) <- get
   put vs
   return $ VarGraphValue v
-varsToGraphValue' nts (AppTExpr (AppTExpr (ConstTExpr "Pair") a) b) =
+varsToGraphValue' nts (AppTExpr (AppTExpr (ConstTExpr "_Pair") a) b) =
   PairGraphValue <$> varsToGraphValue' nts a <*> varsToGraphValue' nts b
-varsToGraphValue' nts (AppTExpr (AppTExpr (ConstTExpr "Either") a) b) = do
+varsToGraphValue' nts (AppTExpr (AppTExpr (ConstTExpr "_Either") a) b) = do
   (v:vs) <- get
   put vs
   EitherGraphValue v <$> varsToGraphValue' nts a <*> varsToGraphValue' nts b
@@ -505,13 +505,13 @@ fmapNewtype :: TypeExpr -> String -> (GraphValue -> GraphBuilder Value GraphValu
 fmapNewtype (VarTExpr var) v f val | var == v = f val
                                    | otherwise = return val
 fmapNewtype (ConstTExpr _) _ _ val = return val
-fmapNewtype (AppTExpr (AppTExpr (ConstTExpr "Pair") atype) btype) v f (PairGraphValue a b) =
+fmapNewtype (AppTExpr (AppTExpr (ConstTExpr "_Pair") atype) btype) v f (PairGraphValue a b) =
   PairGraphValue <$> fmapNewtype atype v f a <*> fmapNewtype btype v f b
-fmapNewtype (AppTExpr (AppTExpr (ConstTExpr "Either") ltype) rtype) v f (EitherGraphValue c l r) =
+fmapNewtype (AppTExpr (AppTExpr (ConstTExpr "_Either") ltype) rtype) v f (EitherGraphValue c l r) =
   EitherGraphValue c <$> fmapNewtype ltype v f l <*> fmapNewtype rtype v f r
-fmapNewtype (AppTExpr (AppTExpr (ConstTExpr "Either") ltype) rtype) v f (PureLeftGraphValue l) =
+fmapNewtype (AppTExpr (AppTExpr (ConstTExpr "_Either") ltype) rtype) v f (PureLeftGraphValue l) =
   PureLeftGraphValue <$> fmapNewtype ltype v f l
-fmapNewtype (AppTExpr (AppTExpr (ConstTExpr "Either") ltype) rtype) v f (PureRightGraphValue r) =
+fmapNewtype (AppTExpr (AppTExpr (ConstTExpr "_Either") ltype) rtype) v f (PureRightGraphValue r) =
   PureRightGraphValue <$> fmapNewtype rtype v f r
 fmapNewtype (AppTExpr (AppTExpr (ConstTExpr "->") argtype) rettype) v f (LambdaGraphValue lam) =
   -- TODO: v should not appear in argtype
@@ -528,34 +528,34 @@ defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b >>= cloneWithNewVars, 
       return $ functionType a $ functionType a a,
    const2 $ return $ LambdaGraphValue $ \v1 ->
      return $ LambdaGraphValue $ \v2 -> unifyGraphValues v1 v2),
-  ("unit", return (ConstTExpr "Unit"), const2 $ return UnitGraphValue),
-  ("fst",
+  ("_unit", return (ConstTExpr "Unit"), const2 $ return UnitGraphValue),
+  ("_fst",
    do a <- newVarType "pair_fst"
       b <- newVarType "pair_snd"
       return $ functionType (pairType a b) a,
    const2 $ return $ LambdaGraphValue $ \(PairGraphValue first _) -> return first),
-  ("snd",
+  ("_snd",
    do a <- newVarType "pair_fst"
       b <- newVarType "pair_snd"
       return $ functionType (pairType a b) b,
    const2 $ return $ LambdaGraphValue $ \(PairGraphValue _ second) -> return second),
-  ("pair",
+  ("_pair",
    do a <- newVarType "pair_fst"
       b <- newVarType "pair_snd"
       return $ functionType a $ functionType b $ pairType a b,
    const2 $ return $ LambdaGraphValue $ \first -> return $ LambdaGraphValue $
      \second -> return $ PairGraphValue first second),
-  ("left",
+  ("_left",
    do a <- newVarType "either_left"
       b <- newVarType "either_right"
       return $ functionType a $ eitherType a b,
    const2 $ return $ LambdaGraphValue $ \value -> return $ PureLeftGraphValue value),
-  ("right",
+  ("_right",
    do a <- newVarType "either_left"
       b <- newVarType "either_right"
       return $ functionType b $ eitherType a b,
    const2 $ return $ LambdaGraphValue $ \value -> return $ PureRightGraphValue value),
-  ("either",
+  ("_either",
    do a <- newVarType "either_left"
       b <- newVarType "either_right"
       c <- newVarType "either_res"
@@ -602,7 +602,7 @@ defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b >>= cloneWithNewVars, 
        cataFun fmapped
   ),
   -- TODO bayes net!
-  ("uniformBool",
+  ("_uniformBool",
    return $ functionType (ConstTExpr "Unit") (ConstTExpr "Bool"),
    const2 $ return $ LambdaGraphValue $ \_ -> do
      v <- newVar boolValueExpFam
@@ -614,8 +614,8 @@ defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b >>= cloneWithNewVars, 
      v <- newVar gaussianValueExpFam
      newFactor (expFamFactor gaussianValueExpFam [] ([0.0, -0.5], [[]])) [v]
      return $ VarGraphValue v),
-  ("true", return (ConstTExpr "Bool"), const2 $ liftM VarGraphValue $ constValue boolValueExpFam $ BoolValue True),
-  ("false", return (ConstTExpr "Bool"), const2 $ liftM VarGraphValue $ constValue boolValueExpFam $ BoolValue False),
+  ("_true", return (ConstTExpr "Bool"), const2 $ liftM VarGraphValue $ constValue boolValueExpFam $ BoolValue True),
+  ("_false", return (ConstTExpr "Bool"), const2 $ liftM VarGraphValue $ constValue boolValueExpFam $ BoolValue False),
   -- ("ifthenelse", return $ functionType (ConstTExpr "Bool") $ functionType (ConstTExpr "Bool") (ConstTExpr "Bool"),
   --  const2 $ return $ LambdaGraphValue $ \(VarGraphValue c) ->
   ("randFunction", return (functionType (ConstTExpr "Unit") $ functionType (VarTExpr "a") $ VarTExpr "b"),
@@ -627,10 +627,7 @@ defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b >>= cloneWithNewVars, 
        return $ LambdaGraphValue $ \argValue -> do
          let argVars = graphValueEmbeddedVars argValue
          resVars <- mapM (flip newSampleFromRandFun argVars) rfs
-         return $ varsToGraphValue nts resType resVars),
-  ("boolToDoubleFun", return (functionType (ConstTExpr "Unit") $ functionType (ConstTExpr "Bool") (ConstTExpr "Double")), const2 $ return $ LambdaGraphValue $ \_ -> do
-    rf <- newRandFun gaussianValueExpFam [boolValueExpFam]
-    return $ LambdaGraphValue $ \(VarGraphValue boolvar) -> liftM VarGraphValue $ newSampleFromRandFun rf [boolvar])
+         return $ varsToGraphValue nts resType resVars)
   ]
 
 toHindleyMilnerContext x = (Map.map fst x, Map.empty)

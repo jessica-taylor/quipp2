@@ -1,4 +1,4 @@
-let fun = randFunction unit;
+let fun = randFunction _unit;
 \un ->
-let b = uniformBool unit;
-pair b (fun b : Double)
+let b = _uniformBool _unit;
+_pair b (fun b : Double)
