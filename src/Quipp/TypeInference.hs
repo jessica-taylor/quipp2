@@ -442,11 +442,11 @@ unifyGraphValues a@(EitherGraphValue _ _ _) b@(PureRightGraphValue _) =
   unifyGraphValues b a
 unifyGraphValues UnitGraphValue UnitGraphValue = return UnitGraphValue
 unifyGraphValues (MuGraphValue _ v1) (MuGraphValue _ v2) = unifyGraphValues v1 v2
-unifyGraphValues _ _ = error ("Cannot unify functions")
+unifyGraphValues v1 v2 = error ("Cannot unify values " ++ show v1 ++ " and " ++ show v2)
 
 
 typeToExpFams :: Map String NewTypeDefinition -> TypeExpr -> [ExpFam Value]
-typeToExpFams _ (ConstTExpr "Unit") = []
+typeToExpFams _ (ConstTExpr "_Unit") = []
 typeToExpFams _ t@(ConstTExpr _) = [expFamForType t]
 typeToExpFams nts (AppTExpr (AppTExpr (ConstTExpr "_Pair") a) b) =
   typeToExpFams nts a ++ typeToExpFams nts b
@@ -474,7 +474,7 @@ graphValueEmbeddedVars (LambdaGraphValue _) =
   error "Cannot get embedded variables in LambdaGraphValue"
 
 varsToGraphValue' :: Map String NewTypeDefinition -> TypeExpr -> State [VarId] GraphValue
-varsToGraphValue' _ (ConstTExpr "Unit") = return UnitGraphValue
+varsToGraphValue' _ (ConstTExpr "_Unit") = return UnitGraphValue
 varsToGraphValue' _ (ConstTExpr x) | elem x ["Bool", "Double"] = do
   (v:vs) <- get
   put vs
@@ -528,7 +528,7 @@ defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b >>= cloneWithNewVars, 
       return $ functionType a $ functionType a a,
    const2 $ return $ LambdaGraphValue $ \v1 ->
      return $ LambdaGraphValue $ \v2 -> unifyGraphValues v1 v2),
-  ("_unit", return (ConstTExpr "Unit"), const2 $ return UnitGraphValue),
+  ("_unit", return (ConstTExpr "_Unit"), const2 $ return UnitGraphValue),
   ("_fst",
    do a <- newVarType "pair_fst"
       b <- newVarType "pair_snd"
@@ -603,13 +603,13 @@ defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b >>= cloneWithNewVars, 
   ),
   -- TODO bayes net!
   ("_uniformBool",
-   return $ functionType (ConstTExpr "Unit") (ConstTExpr "Bool"),
+   return $ functionType (ConstTExpr "_Unit") (ConstTExpr "Bool"),
    const2 $ return $ LambdaGraphValue $ \_ -> do
      v <- newVar boolValueExpFam
      newFactor (expFamFactor boolValueExpFam [] ([0.0], [[]])) [v]
      return $ VarGraphValue v),
   ("standardNormal",
-   return $ functionType (ConstTExpr "Unit") (ConstTExpr "Double"),
+   return $ functionType (ConstTExpr "_Unit") (ConstTExpr "Double"),
    const2 $ return $ LambdaGraphValue $ \_ -> do
      v <- newVar gaussianValueExpFam
      newFactor (expFamFactor gaussianValueExpFam [] ([0.0, -0.5], [[]])) [v]
@@ -618,8 +618,8 @@ defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b >>= cloneWithNewVars, 
   ("_false", return (ConstTExpr "Bool"), const2 $ liftM VarGraphValue $ constValue boolValueExpFam $ BoolValue False),
   -- ("ifthenelse", return $ functionType (ConstTExpr "Bool") $ functionType (ConstTExpr "Bool") (ConstTExpr "Bool"),
   --  const2 $ return $ LambdaGraphValue $ \(VarGraphValue c) ->
-  ("randFunction", return (functionType (ConstTExpr "Unit") $ functionType (VarTExpr "a") $ VarTExpr "b"),
-   \(AppTExpr (AppTExpr (ConstTExpr "->") (ConstTExpr "Unit")) (AppTExpr (AppTExpr (ConstTExpr "->") argType) resType)) nts ->
+  ("randFunction", return (functionType (ConstTExpr "_Unit") $ functionType (VarTExpr "a") $ VarTExpr "b"),
+   \(AppTExpr (AppTExpr (ConstTExpr "->") (ConstTExpr "_Unit")) (AppTExpr (AppTExpr (ConstTExpr "->") argType) resType)) nts ->
      return $ LambdaGraphValue $ \UnitGraphValue -> do
        let argExpFams = typeToExpFams nts argType
            resExpFams = typeToExpFams nts resType

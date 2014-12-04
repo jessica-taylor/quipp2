@@ -26,14 +26,14 @@ example1dClustering = ("1d_clustering.quipp", map (FValueGraphValue . DoubleValu
   1.0, 1.1, 1.2, 1.4, 6.7, 7.9, 8.9, 5.0
   ])
 
-example2dClustering = ("2d_clustering.quipp", map (uncurry (FPairGraphValue `on` (FValueGraphValue . DoubleValue))) [
+example2dClustering = ("2d_clustering.quipp", map (uncurry ((\x y -> FPairGraphValue x (FPairGraphValue y FUnitGraphValue)) `on` (FValueGraphValue . DoubleValue))) [
   (1.0, 11.0), (2.2, 14.5), (3.4, 17.8), (4.6, 20.5), (5.3, 22.7),
   (1.1, 18.6), (2.3, 21.7), (3.5, 23.8), (4.3, 25.3), (5.5, 28.0)
   ])
 
 
 main = do
-  let (filename, samples) = example1dClustering
+  let (filename, samples) = example2dClustering
   contents <- readFile $ "examples/" ++ filename
   let resultExpr =
         case parse toplevel "FILE" contents of

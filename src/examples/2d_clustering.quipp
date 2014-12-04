@@ -1,5 +1,5 @@
-data P a b = MakeP a b;
-let fun = randFunction unit;
+data P a b = P a b;
+let fun = randFunction _unit;
 \un ->
-let b = uniformBool unit;
-pair b (fun b : P Double Double)
+let b = _uniformBool _unit;
+_pair b (fun b : P Double Double)

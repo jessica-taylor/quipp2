@@ -37,23 +37,28 @@ translateNonRecursiveAdtDefinition (name, params, cases) body =
   let pairExpr x y = AppExpr (AppExpr (VarExpr "_pair") x) y
       leftExpr = AppExpr (VarExpr "_left")
       rightExpr = AppExpr (VarExpr "_right")
-      getConstr i ts = foldr LambdaExpr (AppExpr (VarExpr name) $ rightsAndLeft $ foldr pairExpr (VarExpr "_unit") (map VarExpr vars)) vars
+      getConstr i ts = foldr LambdaExpr (AppExpr (VarExpr ("Make" ++ name)) $ rightsAndLeft $ foldr pairExpr (VarExpr "_unit") (map VarExpr vars)) vars
         where vars = take (length ts) varList
               rightsAndLeft | i == length cases - 1 = funPow i rightExpr
                             | otherwise = leftExpr . funPow i rightExpr
   in NewTypeExpr (name, params, foldr1 eitherType [foldr pairType (ConstTExpr "_Unit") ts | (_, ts) <- cases])
       $ foldr (\(i, (constrName, ts)) -> DefExpr constrName (getConstr i ts)) body (zip [0..] cases)
 
-recursiveAdtDefinitionToFunctor :: AdtDefinition -> AdtDefinition
-recursiveAdtDefinitionToFunctor (name, params, cases) =
+translateRecursiveAdtDefinition :: AdtDefinition -> Expr -> Expr
+translateRecursiveAdtDefinition (name, params, cases) body =
   let recVar = name ++ "_rec"
-      fixCase (caseName, ts) = (caseName, map fixType ts)
-      recType = foldl1 AppTExpr $ map VarTExpr (name:params)
+      fixCase (caseName, ts) = (caseName ++ "F", map fixType ts)
+      recType = foldl AppTExpr (ConstTExpr name) $ map VarTExpr (name:params)
       fixType t | t == recType = VarTExpr recVar
       fixType (AppTExpr fun arg) = AppTExpr (fixType fun) (fixType arg)
-      fixType (ConstTExpr t) | t == name = error "Cannot handle polymorphic recursion"
+      fixType (ConstTExpr t) | t == name = error $ "Cannot handle polymorphic recursion in type " ++ name
       fixType other = other
-  in (name, params ++ [recVar], map fixCase cases)
+      getConstr (caseName, ts) = foldr LambdaExpr (AppExpr (VarExpr "mu") $ foldl1 AppExpr $ map VarExpr ((caseName ++ "F"):vars)) vars
+        where vars = take (length ts) varList
+  in translateNonRecursiveAdtDefinition (name ++ "F", params ++ [recVar], map fixCase cases) $
+       NewTypeExpr (name, params, AppTExpr (ConstTExpr "Mu") (foldl AppTExpr (ConstTExpr (name ++ "F")) $ map VarTExpr params)) $
+         foldr (\cas b -> DefExpr (fst cas) (getConstr cas) b) body cases
+
 
 data PatternExpr = VarPExpr String | ConstrPExpr String [PatternExpr] deriving (Eq, Ord, Show)
 
@@ -183,6 +188,11 @@ withBreak p = p ^>> wordBreak ^>> spaces
 
 stringWithBreak = withBreak . string
 
+withParens p = spacedString "(" >> p ^>> spacedString ")"
+
+tupled p unit pair = withParens $ do
+  items <- sepBy p (spacedString ",")
+  return $ if null items then unit else foldr1 pair items
 
 upperId = withBreak ((:) <$> satisfy isUpper <*> many wordChar)
 
@@ -194,7 +204,9 @@ varTypeExpr = VarTExpr <$> lowerId
 
 constTypeExpr = ConstTExpr <$> upperId
 
-atomTypeExpr = varTypeExpr <|> constTypeExpr <|> withParens typeExpr
+parensTypeExpr = tupled typeExpr (ConstTExpr "Unit") (\x y -> AppTExpr (AppTExpr (ConstTExpr "Pair") x) y)
+
+atomTypeExpr = varTypeExpr <|> constTypeExpr <|> parensTypeExpr
 
 applicationTypeExpr = foldl1 AppTExpr <$> many1 atomTypeExpr
 
@@ -206,15 +218,21 @@ typeExpr = functionTypeExpr
 
 literalDouble = withBreak $ (LiteralExpr . DoubleValue . read) <$> ((string "-" <|> string "") >>++ many (satisfy isDigit) >>++ string "." >>++ many (satisfy isDigit))
 
+literalNat = withBreak $ do
+  digits <- many (satisfy isDigit)
+  string "N"
+  return $ iterate (AppExpr (VarExpr "S")) (VarExpr "Z") !! (read digits :: Int)
+
 -- stringChar = (return <$> satisfy (\x -> x /= '"' && x /= '\\')) <|> (string "\\" >>++ (return <$> satisfy (`elem` "0abfnrtv\"\\")))
 
 -- literalString = (read :: String -> String) <$> (string "\"" >>++ many stringChar >>++ string "\"")
 
-withParens p = spacedString "(" >> p ^>> spacedString ")"
 
 varExpr = VarExpr <$> (lowerId <|> upperId)
 
-atomExpr ctx = literalDouble <|> varExpr <|> withParens (expr ctx)
+parensExpr ctx = tupled (expr ctx) (VarExpr "Unit") (\x y -> AppExpr (AppExpr (VarExpr "Pair") x) y)
+
+atomExpr ctx = try literalDouble <|> literalNat <|> varExpr <|> parensExpr ctx
 
 applicationExpr ctx = foldl1 AppExpr <$> many1 (atomExpr ctx)
 
@@ -274,10 +292,13 @@ constrPatternExpr = do
   constr <- upperId
   return $ ConstrPExpr constr []
 
-atomPatternExpr = varPatternExpr <|> constrPatternExpr <|> withParens patternExpr
+parensPatternExpr = tupled patternExpr (ConstrPExpr "Unit" []) (\x y -> ConstrPExpr "Pair" [x, y])
 
-appPatternExpr = foldl1 makeApp <$> many1 atomPatternExpr
-  where makeApp (ConstrPExpr constr fields) x = ConstrPExpr constr (fields ++ [x])
+atomPatternExpr = varPatternExpr <|> constrPatternExpr <|> parensPatternExpr
+
+makeAppPattern (ConstrPExpr constr fields) x = ConstrPExpr constr (fields ++ [x])
+
+appPatternExpr = foldl1 makeAppPattern <$> many1 atomPatternExpr
 
 patternExpr = appPatternExpr
 
@@ -313,10 +334,11 @@ adtExpr ctx = do
   let def = (typeName, paramNames, cases)
   trace ("DATA: " ++ show def) $ return ()
   body <- expr (foldr (uncurry Map.insert) ctx [(c, def) | (c, _) <- cases])
-  return $ translateNonRecursiveAdtDefinition def body
+  return $ (if isRec then translateRecursiveAdtDefinition else translateNonRecursiveAdtDefinition) def body
 
 
 expr ctx = try (letExpr ctx) <|> try (defExpr ctx) <|> try (lambdaExpr ctx) <|> try (ofTypeExpr ctx)
-           <|> try (newTypeExpr ctx) <|> try (adtExpr ctx) <|> try (caseExpr ctx)
+           <|> try (adtExpr ctx) <|> try (caseExpr ctx)
+           -- <|> try (newTypeExpr ctx) 
 
 toplevel = spaces >> expr Map.empty
