@@ -1,5 +1,4 @@
-data P a b = P a b;
-let fun = randFunction _unit;
-\un ->
-let b = _uniformBool _unit;
-_pair b (fun b : P Double Double)
+let fun = randFunction ();
+\_ ->
+let b = uniformBool ();
+(b, fun b : (Double, Double))

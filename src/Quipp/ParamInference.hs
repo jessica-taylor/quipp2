@@ -33,7 +33,6 @@ conditionedNetwork t model condValues = do
   samps <- samplerToSamples (length condValues) model
   let cond value (latent, samp) = do
         unfrozenValue <- unfreezeGraphValue value
-        trace ("unfrozen " ++ show unfrozenValue ++ ", samp " ++ show samp) $ return ()
         unifyGraphValues samp unfrozenValue
         return latent
   zipWithM cond condValues samps

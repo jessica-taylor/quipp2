@@ -602,24 +602,20 @@ defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b >>= cloneWithNewVars, 
        cataFun fmapped
   ),
   -- TODO bayes net!
-  ("_uniformBool",
-   return $ functionType (ConstTExpr "_Unit") (ConstTExpr "Bool"),
+  ("uniformBool",
+   return $ functionType (ConstTExpr "Unit") (ConstTExpr "Bool"),
    const2 $ return $ LambdaGraphValue $ \_ -> do
      v <- newVar boolValueExpFam
      newFactor (expFamFactor boolValueExpFam [] ([0.0], [[]])) [v]
      return $ VarGraphValue v),
   ("standardNormal",
-   return $ functionType (ConstTExpr "_Unit") (ConstTExpr "Double"),
+   return $ functionType (ConstTExpr "Unit") (ConstTExpr "Double"),
    const2 $ return $ LambdaGraphValue $ \_ -> do
      v <- newVar gaussianValueExpFam
      newFactor (expFamFactor gaussianValueExpFam [] ([0.0, -0.5], [[]])) [v]
      return $ VarGraphValue v),
-  ("_true", return (ConstTExpr "Bool"), const2 $ liftM VarGraphValue $ constValue boolValueExpFam $ BoolValue True),
-  ("_false", return (ConstTExpr "Bool"), const2 $ liftM VarGraphValue $ constValue boolValueExpFam $ BoolValue False),
-  -- ("ifthenelse", return $ functionType (ConstTExpr "Bool") $ functionType (ConstTExpr "Bool") (ConstTExpr "Bool"),
-  --  const2 $ return $ LambdaGraphValue $ \(VarGraphValue c) ->
-  ("randFunction", return (functionType (ConstTExpr "_Unit") $ functionType (VarTExpr "a") $ VarTExpr "b"),
-   \(AppTExpr (AppTExpr (ConstTExpr "->") (ConstTExpr "_Unit")) (AppTExpr (AppTExpr (ConstTExpr "->") argType) resType)) nts ->
+  ("randFunction", return (functionType (ConstTExpr "Unit") $ functionType (VarTExpr "a") $ VarTExpr "b"),
+   \(AppTExpr (AppTExpr (ConstTExpr "->") (ConstTExpr "Unit")) (AppTExpr (AppTExpr (ConstTExpr "->") argType) resType)) nts ->
      return $ LambdaGraphValue $ \UnitGraphValue -> do
        let argExpFams = typeToExpFams nts argType
            resExpFams = typeToExpFams nts resType

@@ -32,16 +32,16 @@ varList = ["x_" ++ show i | i <- [0..]]
 type ParseContext = Map String AdtDefinition
 
 translateNonRecursiveAdtDefinition :: AdtDefinition -> Expr -> Expr
-translateNonRecursiveAdtDefinition (name, params, cases) body | trace ("\nCASES: " ++ show cases )False = undefined
 translateNonRecursiveAdtDefinition (name, params, cases) body =
   let pairExpr x y = AppExpr (AppExpr (VarExpr "_pair") x) y
       leftExpr = AppExpr (VarExpr "_left")
       rightExpr = AppExpr (VarExpr "_right")
-      getConstr i ts = foldr LambdaExpr (AppExpr (VarExpr ("Make" ++ name)) $ rightsAndLeft $ foldr pairExpr (VarExpr "_unit") (map VarExpr vars)) vars
+      nestedTuple unit pair lst = if null lst then unit else foldr1 pair lst
+      getConstr i ts = foldr LambdaExpr (AppExpr (VarExpr ("Make" ++ name)) $ rightsAndLeft $ nestedTuple (VarExpr "_unit") pairExpr (map VarExpr vars)) vars
         where vars = take (length ts) varList
               rightsAndLeft | i == length cases - 1 = funPow i rightExpr
                             | otherwise = leftExpr . funPow i rightExpr
-  in NewTypeExpr (name, params, foldr1 eitherType [foldr pairType (ConstTExpr "_Unit") ts | (_, ts) <- cases])
+  in NewTypeExpr (name, params, foldr1 eitherType [nestedTuple (ConstTExpr "_Unit") pairType ts | (_, ts) <- cases])
       $ foldr (\(i, (constrName, ts)) -> DefExpr constrName (getConstr i ts)) body (zip [0..] cases)
 
 translateRecursiveAdtDefinition :: AdtDefinition -> Expr -> Expr
@@ -71,7 +71,7 @@ toPrimPat constrDef (ConstrPExpr constr fields) =
       caseIndex = fromJust $ findIndex ((== constr) . fst) adtCases
       leftsAndRight | caseIndex == length adtCases - 1 = funPow caseIndex RightPPExpr
                     | otherwise = LeftPPExpr . funPow caseIndex RightPPExpr
-  in NewtypeConstrPPExpr adtName $ leftsAndRight $ foldr PairPPExpr UnitPPExpr $ map (toPrimPat constrDef) fields
+  in NewtypeConstrPPExpr ("Make" ++ adtName) $ leftsAndRight $ foldr PairPPExpr UnitPPExpr $ map (toPrimPat constrDef) fields
 
 primPatImplies :: PrimPatternExpr -> PrimPatternExpr -> Bool
 primPatImplies _ (VarPPExpr _) = True
@@ -164,7 +164,8 @@ casesToExpr depth ex cases =
       in trace ("\nLRC: " ++ show (leftCases, rightCases)) $ foldl1 AppExpr [VarExpr "_either", lensToExpr lens ex, handler leftCases, handler rightCases]
     Just (lens, Just ntname) | take 4 ntname == "Make" ->
       let newCases = map (expandNewtypeCase lens ntname) cases'
-      in casesToExpr (depth + 1) (modifyLensExpr lens (VarExpr ("un" ++ ntname)) ex) newCases
+      in casesToExpr (depth + 1) (modifyLensExpr lens (VarExpr ("un" ++ drop 4 ntname)) ex) newCases
+    Just (lens, Just ntname) -> error ("casesToExpr failed: cases = " ++ show cases ++ ", lens = " ++ show lens ++ ", ntname = " ++ ntname)
 
 infixl 1 ^>>
 
@@ -247,6 +248,13 @@ ofTypeExpr ctx = do
 
 -- no operators for now
 
+definition ctx = do
+  var <- lowerId
+  args <- many lowerId
+  spacedString "="
+  value <- expr ctx
+  spacedString ";"
+  return (var, foldr LambdaExpr value args)
 
 lambdaExpr ctx = do
   spacedString "\\"
@@ -257,21 +265,13 @@ lambdaExpr ctx = do
 
 letExpr ctx = do
   stringWithBreak "let"
-  var <- lowerId
-  -- TODO define functions?
-  spacedString "="
-  value <- expr ctx
-  spacedString ";"
+  (var, value) <- definition ctx
   body <- expr ctx
   return $ AppExpr (LambdaExpr var body) value
 
 defExpr ctx = do
   stringWithBreak "def"
-  var <- lowerId
-  -- TODO define functions?
-  spacedString "="
-  value <- expr ctx
-  spacedString ";"
+  (var, value) <- definition ctx
   body <- expr ctx
   return $ DefExpr var value body
 

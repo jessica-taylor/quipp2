@@ -150,3 +150,107 @@ If we are determining c, it's easy
 If we are determining a, we want:
 old distr of a / old message * factor ~= new message * old distr of a / old message
 
+-----------------
+
+GADTs
+
+data FingerTree a where
+  Nil :: FingerTree a
+  Singleton :: a -> FingerTree a
+  Branch :: [a] -> [a] -> FingerTree (Node a) -> FingerTree a
+
+How to rewrite to not be recursive?
+
+data FingerTree b a where
+  Nil :: FingerTree b a
+  Singleton :: a -> FingerTree b a
+  Branch :: [a] -> [a] -> b (Node a) -> FingerTree b a
+
+data Mu (f :: * -> *) = Mu (f (Mu f))
+
+cata :: (f a -> a) -> Mu f -> a
+cata f (Mu x) = f (fmap (cata f) x)
+
+data Mu2 (f :: (* -> *) -> *) (a :: *) = Mu2 (f (Mu2 f) a)
+
+Mu2 :: ((* -> *) -> * -> *) -> * -> *
+
+data Mu2 (f :: (* -> *) -> * -> *) (a :: *) = Mu2 (f (Mu2 f) a)
+
+Mu2 :: f (Mu2 f) a -> Mu2 f
+
+cata2 :: Functor (f g) => (f g a -> g a) -> Mu2 f a -> g a
+cata2 red (Mu (x :: f (Mu2 f) a)) = 
+  red (fmap2 (cata2 red) x)
+
+fmap2 :: (Mu2 f a -> g a) -> f (Mu2 f) a -> f g a
+
+fmap2 :: (g a -> h a) -> f g a -> f h a
+  
+
+
+-----------------
+
+idea:
+
+get rid of total functional aspects
+
+have a couple types of recursion
+
+let rec f x ....
+
+let brec 
+
+let urec
+
+easy to support GADTs without weird algebras
+
+let brec {
+  f x = x
+}
+
+unrestrected mu types
+
+data Mu f = Mu (f (Mu f))
+f need not be a functor!
+
+-----------------------
+
+Parametricity?
+
+How many values of exists a. f(a) are there?
+
+exists a. Either (f a) (g a) =
+Either (exists a. f a) (exists a. g a)
+
+exists a. (f a, g a) =
+
+
+How many non-a values can we get out of the expression?
+We can feed a's to a's in arguments.
+
+e.g. exists a. (a, a -> b) = b
+exists a. (Bool -> a, a -> b) = Bool -> b
+
+--------------------------
+
+probability distributions over types?
+
+clustering =
+  let nclusters = geometric 2;
+      getCluster = randFunction () : (() -> Categorical nclusters);
+      getPoint = randFunction () : (Categorical nclusters -> Vector n);
+  \u -> getPoint (getCluster ())
+  
+slightly saner now:
+
+clustering =
+  let nclusters = geometric 2;
+  let getCluster = randFunction Unit (Categorical nclusters);
+  let getPoint = randFunction (Categorical nclusters) (Vector n);
+  \u -> getPoint (getCluster ())
+
+type is a type
+what about type inference?
+- might have to sacrifice this :(
+dynamically typed?
