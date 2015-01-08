@@ -48,11 +48,7 @@ main = do
         case parse toplevel "FILE" fullSource of
           Left err -> error $ show err
           Right result -> result
-      typed =
-        case typeInfer (toHindleyMilnerContext defaultContext) resultExpr of
-          Left err -> error err
-          Right result -> result
-      builder = interpretExpr (toInterpretContext defaultContext) Map.empty typed
+      builder = interpretExpr (toInterpretContext defaultContext) Map.empty resultExpr
       -- (template, result) = runGraphBuilder builder
   -- print resultExpr
   -- print typed
