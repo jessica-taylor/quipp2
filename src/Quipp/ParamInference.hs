@@ -28,8 +28,8 @@ takeSamples n model params = do
   return [(freezeGraphValue (assignment !) latent, freezeGraphValue (assignment !) obs) | (latent, obs) <- samps]
 
 
-conditionedNetwork :: TypeExpr -> GraphBuilder Value GraphValue -> [FrozenGraphValue] -> GraphBuilder Value [GraphValue]
-conditionedNetwork t model condValues = do
+conditionedNetwork :: GraphBuilder Value GraphValue -> [FrozenGraphValue] -> GraphBuilder Value [GraphValue]
+conditionedNetwork model condValues = do
   samps <- samplerToSamples (length condValues) model
   let cond value (latent, samp) = do
         unfrozenValue <- unfreezeGraphValue value
@@ -60,9 +60,9 @@ data ParamInferenceOptions = ParamInferenceOptions {
   optsNumSamples :: Int
 }
 
-inferParametersFromSamples :: TypeExpr -> GraphBuilder Value GraphValue -> [FrozenGraphValue] -> RVar [([FrozenGraphValue], FactorGraphParams)]
-inferParametersFromSamples t model samps = do
-  let condNet = conditionedNetwork t model samps
+inferParametersFromSamples :: GraphBuilder Value GraphValue -> [FrozenGraphValue] -> RVar [([FrozenGraphValue], FactorGraphParams)]
+inferParametersFromSamples model samps = do
+  let condNet = conditionedNetwork model samps
   let (condTemplate, latents) = runGraphBuilder condNet
   fstList <- sampleRVar (initFst condTemplate) >>= iterateRVar (stepEM condTemplate)
   let assnValue assn varid = case assn ! varid of
@@ -70,14 +70,14 @@ inferParametersFromSamples t model samps = do
         NatParam np -> error ("Gibbs sampling is fuzzy? " ++ show varid ++ ", " ++ show assn)
   return [(map (freezeGraphValue (assnValue assn)) latents, params) | (assn, params) <- tail fstList]
 
-inferParameters :: ParamInferenceOptions -> TypeExpr -> GraphBuilder Value GraphValue -> RVar (FactorGraphParams, [FrozenGraphValue], [FrozenGraphValue], [([FrozenGraphValue], FactorGraphParams)])
-inferParameters opts t model = do
+inferParameters :: ParamInferenceOptions -> GraphBuilder Value GraphValue -> RVar (FactorGraphParams, [FrozenGraphValue], [FrozenGraphValue], [([FrozenGraphValue], FactorGraphParams)])
+inferParameters opts model = do
   let (singleSampleTemplate, _) = runGraphBuilder model
   traceShow singleSampleTemplate $ return ()
   randParams <- randTemplateParams 10.0 singleSampleTemplate
   samps <- takeSamples (optsNumSamples opts) model randParams
   -- trace ("samples: " ++ show samps) $ return ()
-  iterativeResults <- inferParametersFromSamples t model (map snd samps)
+  iterativeResults <- inferParametersFromSamples model (map snd samps)
   return (randParams, map fst samps, map snd samps, iterativeResults)
   
 

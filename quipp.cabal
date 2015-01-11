@@ -15,7 +15,8 @@ build-type:          Simple
 extra-source-files:  README.md
 cabal-version:       >=1.10
 
-library
+executable quipp_main
+  main-is: Main.hs
   exposed-modules:     Quipp.Parser, Quipp.Factor, Quipp.Value, Quipp.ExpFam, Quipp.Vmp, Quipp.BayesNet, Quipp.ParamInference
   -- other-modules:       
   -- other-extensions:    
@@ -29,7 +30,8 @@ library
     -- bed-and-breakfast >= 0.5,
     hmatrix >= 0.16,
     parsec >= 3.1,
-    MissingH >= 1.2
+    MissingH >= 1.2,
+    time >= 1.4
 
   hs-source-dirs: src
   default-language:    Haskell2010

@@ -1,4 +1,4 @@
-let fun = randFunction ();
+let fun = randFunction TBool (TPair TDouble TDouble);
 \_ ->
 let b = uniformBool ();
-(b, fun b : (Double, Double))
+(b, fun b)

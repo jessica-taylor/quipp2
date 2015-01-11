@@ -3,6 +3,7 @@ module Quipp.Util where
 
 import Control.Monad (liftM)
 import Control.Monad.State.Lazy (runState)
+import Control.Monad.Identity
 import Debug.Trace
 import Data.Function (on)
 import Data.List (groupBy, sortBy)

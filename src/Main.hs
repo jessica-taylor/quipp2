@@ -1,4 +1,4 @@
-module Quipp.Main where
+module Main where
 
 import Data.Time.Clock (getCurrentTime, utctDayTime)
 import Control.Monad (forM_)
@@ -48,12 +48,10 @@ main = do
         case parse toplevel "FILE" fullSource of
           Left err -> error $ show err
           Right result -> result
-      builder = interpretExpr (toInterpretContext defaultContext) Map.empty resultExpr
+      builder = interpretExpr defaultContext Map.empty resultExpr
       -- (template, result) = runGraphBuilder builder
   -- print resultExpr
-  -- print typed
-  let (AppTExpr (AppTExpr (ConstTExpr "->") _) t) = fst typed
-  iters <- sampleRVar $ inferParametersFromSamples t builder samples
+  iters <- sampleRVar $ inferParametersFromSamples builder samples
   -- (actualParams, actualLatents, samples, iters) <- sampleRVar $ inferParameters (ParamInferenceOptions {optsNumSamples = 20}) t builder
   -- putStrLn $ "ACTUAL PARAMS: " ++ show actualParams
   -- putStrLn $ "ACTUAL LATENTS: " ++ show actualLatents

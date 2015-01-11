@@ -2,114 +2,103 @@
 
 module Quipp.TypeInference where
 
-  import Debug.Trace
-  import Data.Function (fix)
+import Debug.Trace
+import Data.Function (fix)
 import Data.Map (Map)
-  import qualified Data.Map as Map
-  import Control.Applicative ((<$>), (<*>))
-  import Control.Monad (liftM, zipWithM, forM)
-  import Control.Monad.Reader (ReaderT, runReaderT)
-  import Control.Monad.Reader.Class (ask, local)
-  import Control.Monad.State (get, put)
-  import Control.Monad.State.Lazy (State, runState, StateT, runStateT)
+import qualified Data.Map as Map
+import Control.Applicative ((<$>), (<*>))
+import Control.Monad (liftM, zipWithM, forM)
+import Control.Monad.Reader (ReaderT, runReaderT)
+import Control.Monad.Reader.Class (ask, local)
+import Control.Monad.State (get, put)
+import Control.Monad.State.Lazy (State, runState, StateT, runStateT)
 import Control.Monad.Trans (lift)
 
-  import Quipp.ExpFam
-  import Quipp.Factor
-  import Quipp.GraphBuilder
-  import Quipp.Value
-  import Quipp.Util
+import Quipp.ExpFam
+import Quipp.Factor
+import Quipp.GraphBuilder
+import Quipp.Value
+import Quipp.Util
 
 data TypeExpr = VarTExpr String | ConstTExpr String | AppTExpr TypeExpr TypeExpr deriving (Eq, Ord)
 
-  instance Show TypeExpr where
+instance Show TypeExpr where
   showsPrec _ (VarTExpr v) = showString v
   showsPrec _ (ConstTExpr s) = showString s
   showsPrec p (AppTExpr (AppTExpr (ConstTExpr "->") a) r) =
-  showParen (p > 5) $ showsPrec 6 a . showString " -> " . showsPrec 5 r
+    showParen (p > 5) $ showsPrec 6 a . showString " -> " . showsPrec 5 r
   showsPrec p (AppTExpr a b) =
-  showParen (p > 10) $ showsPrec 10 a . showString " " . showsPrec 11 b
+    showParen (p > 10) $ showsPrec 10 a . showString " " . showsPrec 11 b
 
 type NewTypeDefinition = (String, [String], TypeExpr)
 
   -- Un-annotated expressions.
 data Expr = VarExpr String | WithTypeExpr Expr TypeExpr | LambdaExpr String Expr | AppExpr Expr Expr | DefExpr String Expr Expr | LiteralExpr Value | NewTypeExpr NewTypeDefinition Expr deriving (Eq, Ord)
 
-  instance Show Expr where
+instance Show Expr where
   showsPrec _ (VarExpr v) = showString v
   showsPrec p (LiteralExpr v) = showsPrec p v
   showsPrec p (WithTypeExpr e t) =
-  showParen (p > 3) $ showsPrec 1 e . showString " : " . showsPrec 3 t
+    showParen (p > 3) $ showsPrec 1 e . showString " : " . showsPrec 3 t
   showsPrec p (LambdaExpr v b) =
-  showParen (p > 1) $ showString "\\" . showString v . showString " -> " . showsPrec 1 b
+    showParen (p > 1) $ showString "\\" . showString v . showString " -> " . showsPrec 1 b
   showsPrec p (AppExpr (LambdaExpr s b) v) =
-  showParen (p > 1) $ showString "let " . showString s . showString " = " . showsPrec 0 v . showString ";\n" . showsPrec 0 b
+    showParen (p > 1) $ showString "let " . showString s . showString " = " . showsPrec 0 v . showString ";\n" . showsPrec 0 b
   showsPrec p (AppExpr a b) =
-  showParen (p > 10) $ showsPrec 10 a . showString " " . showsPrec 11 b
+    showParen (p > 10) $ showsPrec 10 a . showString " " . showsPrec 11 b
   showsPrec p (DefExpr s v b) =
-  showParen (p > 1) $ showString "def " . showString s . showString " = " . showsPrec 0 v . showString ";\n" . showsPrec 0 b
+    showParen (p > 1) $ showString "def " . showString s . showString " = " . showsPrec 0 v . showString ";\n" . showsPrec 0 b
   showsPrec p (NewTypeExpr (name, params, inner) body) =
-  showParen (p > 1) $ showString "newtype " . showString (unwords (name : params)) . showString " = " . showsPrec 0 inner . showString ";\n" . showsPrec 0 body
+    showParen (p > 1) $ showString "newtype " . showString (unwords (name : params)) . showString " = " . showsPrec 0 inner . showString ";\n" . showsPrec 0 body
 
-  type TypeId = Int
+type TypeId = Int
 
-  functionType a b = AppTExpr (AppTExpr (ConstTExpr "->") a) b
-  pairType a b = AppTExpr (AppTExpr (ConstTExpr "_Pair") a) b
-  eitherType a b = AppTExpr (AppTExpr (ConstTExpr "_Either") a) b
-  muType f = AppTExpr (ConstTExpr "Mu") f
+functionType a b = AppTExpr (AppTExpr (ConstTExpr "->") a) b
+pairType a b = AppTExpr (AppTExpr (ConstTExpr "_Pair") a) b
+eitherType a b = AppTExpr (AppTExpr (ConstTExpr "_Either") a) b
+muType f = AppTExpr (ConstTExpr "Mu") f
 
 splitAppType :: TypeExpr -> (TypeExpr, [TypeExpr])
-  splitAppType (AppTExpr a b) =
+splitAppType (AppTExpr a b) =
   let (head, args) = splitAppType a in (head, args ++ [b])
 splitAppType other = (other, [])
 
 
 splitFunctionType :: TypeExpr -> ([TypeExpr], TypeExpr)
-  splitFunctionType (AppTExpr (AppTExpr (ConstTExpr "->") a) b) =
+splitFunctionType (AppTExpr (AppTExpr (ConstTExpr "->") a) b) =
   let (args, res) = splitFunctionType b in (a:args, res)
 splitFunctionType other = ([], other)
 
 
-  reduceTypeShallowIn :: Map String TypeExpr -> TypeExpr -> TypeExpr
+reduceTypeShallowIn :: Map String TypeExpr -> TypeExpr -> TypeExpr
 
-  reduceTypeShallowIn m t@(VarTExpr v) = case Map.lookup v m of
+reduceTypeShallowIn m t@(VarTExpr v) = case Map.lookup v m of
   Nothing -> t
   Just t' -> reduceTypeShallowIn m t'
-  reduceTypeShallowIn _ other = other
+reduceTypeShallowIn _ other = other
 
-  reduceTypeShallow :: TypeExpr -> TypeCheck TypeExpr
-  reduceTypeShallow t = do
-  (m, _) <- lift get
-return (reduceTypeShallowIn m t)
-
-  reduceTypeDeepIn :: Map String TypeExpr -> TypeExpr -> TypeExpr
-  reduceTypeDeepIn m t = case reduceTypeShallowIn m t of
-AppTExpr fun arg -> AppTExpr (reduceTypeDeepIn m fun) (reduceTypeDeepIn m arg)
+reduceTypeDeepIn :: Map String TypeExpr -> TypeExpr -> TypeExpr
+reduceTypeDeepIn m t = case reduceTypeShallowIn m t of
+  AppTExpr fun arg -> AppTExpr (reduceTypeDeepIn m fun) (reduceTypeDeepIn m arg)
   other -> other
 
-  reduceTypeDeep :: TypeExpr -> TypeCheck TypeExpr
-  reduceTypeDeep t = do
-  (m, _) <- lift get
-return (reduceTypeDeepIn m t)
+simpleValueType :: Value -> TypeExpr
+simpleValueType (DoubleValue _) = ConstTExpr "Double"
+simpleValueType (BoolValue _) = ConstTExpr "Bool"
+
+-- We can't get the type of an arbitrary GraphValue.  However, we can do some
+-- sanity checks to make sure it's not completely the wrong type.
 
 
-  simpleValueType :: Value -> TypeExpr
-  simpleValueType (DoubleValue _) = ConstTExpr "Double"
-  simpleValueType (BoolValue _) = ConstTExpr "Bool"
-
-  -- We can't get the type of an arbitrary GraphValue.  However, we can do some
-  -- sanity checks to make sure it's not completely the wrong type.
+-- perhaps the rest should be split up?
+--
 
 
-  -- perhaps the rest should be split up?
-  --
-
-
-  data GraphValue = VarGraphValue VarId | LambdaGraphValue (GraphValue -> GraphBuilder Value GraphValue) | UnitGraphValue | PairGraphValue GraphValue GraphValue | EitherGraphValue VarId GraphValue GraphValue | PureLeftGraphValue GraphValue | PureRightGraphValue GraphValue | MuGraphValue NewTypeDefinition GraphValue | TypeGraphValue TypeExpr
+data GraphValue = VarGraphValue VarId | LambdaGraphValue (GraphValue -> GraphBuilder Value GraphValue) | UnitGraphValue | PairGraphValue GraphValue GraphValue | EitherGraphValue VarId GraphValue GraphValue | PureLeftGraphValue GraphValue | PureRightGraphValue GraphValue | MuGraphValue NewTypeDefinition GraphValue | TypeGraphValue TypeExpr
 
 data FrozenGraphValue = FValueGraphValue Value | FUnitGraphValue | FPairGraphValue FrozenGraphValue FrozenGraphValue | FLeftGraphValue FrozenGraphValue | FRightGraphValue FrozenGraphValue | FMuGraphValue NewTypeDefinition FrozenGraphValue | FTypeGraphValue TypeExpr deriving (Eq, Ord)
 
-  instance Show GraphValue where
+instance Show GraphValue where
   show (VarGraphValue varid) = "$" ++ show varid
   show (LambdaGraphValue _) = "#lambda"
   show UnitGraphValue = "()"
@@ -118,54 +107,54 @@ data FrozenGraphValue = FValueGraphValue Value | FUnitGraphValue | FPairGraphVal
   show (PureLeftGraphValue left) = "(Left " ++ show left ++ ")"
   show (PureRightGraphValue right) = "(Right " ++ show right ++ ")"
   show (MuGraphValue _ v) = "(Mu " ++ show v ++ ")"
-  show (TypeGraphValue t) = show t
+  show (TypeGraphValue t) = "#" ++ show t
 
-  instance Show FrozenGraphValue where
+instance Show FrozenGraphValue where
   show (FValueGraphValue v) = show v
   show FUnitGraphValue = "()"
   show (FPairGraphValue a b) = "(" ++ show a ++ ", " ++ show b ++ ")"
   show (FLeftGraphValue a) = "(Left " ++ show a ++ ")"
   show (FRightGraphValue b) = "(Right " ++ show b ++ ")"
   show (FMuGraphValue _ v) = "(Mu " ++ show v ++ ")"
-  show (FTypeGraphValue t) = show t
+  show (FTypeGraphValue t) = "#" ++ show t
 
-  freezeGraphValue :: (VarId -> Value) -> GraphValue -> FrozenGraphValue
-  freezeGraphValue _ UnitGraphValue = FUnitGraphValue
-  freezeGraphValue f (VarGraphValue v) = FValueGraphValue $ f v
+freezeGraphValue :: (VarId -> Value) -> GraphValue -> FrozenGraphValue
+freezeGraphValue _ UnitGraphValue = FUnitGraphValue
+freezeGraphValue f (VarGraphValue v) = FValueGraphValue $ f v
 freezeGraphValue f (PairGraphValue a b) = FPairGraphValue (freezeGraphValue f a) (freezeGraphValue f b)
-  freezeGraphValue f (EitherGraphValue c l r) = case f c of
+freezeGraphValue f (EitherGraphValue c l r) = case f c of
   BoolValue False -> FLeftGraphValue (freezeGraphValue f l)
-BoolValue True -> FRightGraphValue (freezeGraphValue f r)
+  BoolValue True -> FRightGraphValue (freezeGraphValue f r)
   other -> error ("Bad boolean: " ++ show other)
-  freezeGraphValue f (PureLeftGraphValue l) = FLeftGraphValue (freezeGraphValue f l)
-  freezeGraphValue f (PureRightGraphValue r) = FRightGraphValue (freezeGraphValue f r)
+freezeGraphValue f (PureLeftGraphValue l) = FLeftGraphValue (freezeGraphValue f l)
+freezeGraphValue f (PureRightGraphValue r) = FRightGraphValue (freezeGraphValue f r)
 freezeGraphValue f (MuGraphValue def v) = FMuGraphValue def (freezeGraphValue f v)
-  freezeGraphValue _ other = error "Cannot freeze lambdas"
-  freezeGraphValue _ (TypeGraphValue t) = FTypeGraphValue t
+freezeGraphValue _ other = error "Cannot freeze lambdas"
+freezeGraphValue _ (TypeGraphValue t) = FTypeGraphValue t
 
-  unfreezeGraphValue :: FrozenGraphValue -> GraphBuilder Value GraphValue
-  unfreezeGraphValue FUnitGraphValue = return UnitGraphValue
-  unfreezeGraphValue (FValueGraphValue value) =
+unfreezeGraphValue :: FrozenGraphValue -> GraphBuilder Value GraphValue
+unfreezeGraphValue FUnitGraphValue = return UnitGraphValue
+unfreezeGraphValue (FValueGraphValue value) =
   VarGraphValue <$> constValue (expFamForType (simpleValueType value)) value
-  unfreezeGraphValue (FPairGraphValue a b) =
+unfreezeGraphValue (FPairGraphValue a b) =
   PairGraphValue <$> unfreezeGraphValue a <*> unfreezeGraphValue b
-  unfreezeGraphValue (FLeftGraphValue value) = PureLeftGraphValue <$> unfreezeGraphValue value
-  unfreezeGraphValue (FRightGraphValue value) = PureRightGraphValue <$> unfreezeGraphValue value
-  unfreezeGraphValue (FMuGraphValue def v) = MuGraphValue def <$> unfreezeGraphValue  v
-  unfreezeGraphValue other = error ("Cannot freeze " ++ show other)
-  unfreezeGraphValue (FTypeGraphValue t) = return $ TypeGraphValue t
+unfreezeGraphValue (FLeftGraphValue value) = PureLeftGraphValue <$> unfreezeGraphValue value
+unfreezeGraphValue (FRightGraphValue value) = PureRightGraphValue <$> unfreezeGraphValue value
+unfreezeGraphValue (FMuGraphValue def v) = MuGraphValue def <$> unfreezeGraphValue  v
+unfreezeGraphValue other = error ("Cannot freeze " ++ show other)
+unfreezeGraphValue (FTypeGraphValue t) = return $ TypeGraphValue t
 
-  expFamForType :: TypeExpr -> ExpFam Value
-  expFamForType (ConstTExpr "Double") = gaussianValueExpFam
-  expFamForType (ConstTExpr "Bool") = boolValueExpFam
-  expFamForType t = error $ "Can't get exponential family for type " ++ show t
+expFamForType :: TypeExpr -> ExpFam Value
+expFamForType (ConstTExpr "Double") = gaussianValueExpFam
+expFamForType (ConstTExpr "Bool") = boolValueExpFam
+expFamForType t = error $ "Can't get exponential family for type " ++ show t
 
-  multiArgFunction :: Int -> ([GraphValue] -> GraphBuilder GraphValue) -> GraphBuilder GraphValue
-  multiArgFunction 0 fn = fn []
-multiArgFunction nArgs fn = LambdaGraphValue $ \firstArg -> multiArgFunction (nArgs - 1) (\restArgs -> fn (firstArg : restArgs))
+multiArgFunction :: Int -> ([GraphValue] -> GraphBuilder Value GraphValue) -> GraphBuilder Value GraphValue
+multiArgFunction 0 fn = fn []
+multiArgFunction nArgs fn = return $ LambdaGraphValue $ \firstArg -> multiArgFunction (nArgs - 1) (\restArgs -> fn (firstArg : restArgs))
 
-  expandNewType :: NewTypeDefinition -> [TypeExpr] -> TypeExpr
-  expandNewType (_, paramVars, inner) params =
+expandNewType :: NewTypeDefinition -> [TypeExpr] -> TypeExpr
+expandNewType (_, paramVars, inner) params =
   reduceTypeDeepIn (foldr (uncurry Map.insert) Map.empty (zipSameLength paramVars params)) inner
 
 
@@ -179,10 +168,10 @@ interpretExpr _ _ x | trace ("\ninterpret " ++ show x) False = undefined
 
 interpretExpr m nts (VarExpr var) = case Map.lookup var m of
   Nothing -> error ("cannot find variable " ++ var)
-  Just val -> val typ nts
+  Just val -> val nts
 
 interpretExpr m nts (LambdaExpr param body) = return $ LambdaGraphValue $
-  \arg -> interpretExpr (Map.insert param (const2 $ return arg) m) nts body
+  \arg -> interpretExpr (Map.insert param (const $ return arg) m) nts body
 
 interpretExpr m nts (AppExpr fun arg) = do
   funVal <- interpretExpr m nts fun
@@ -194,7 +183,7 @@ interpretExpr m nts (DefExpr var value body) = do
   interpretExpr (Map.insert var (\_ -> interpretExpr m nts value) m) nts body
 
 interpretExpr m nts (LiteralExpr value) = do
-  var <- newVar (expFamForType t)
+  var <- newVar (expFamForType (simpleValueType value))
   newConstFactor var value
   return $ VarGraphValue var
 
@@ -202,8 +191,10 @@ interpretExpr m nts (NewTypeExpr defn@(typeName, typeArgs, innerType) body) = do
   let wrappedType = foldl AppTExpr (ConstTExpr typeName) (map VarTExpr typeArgs)
   let idFun = const $ return $ LambdaGraphValue $ \x -> return x
   let valueToType (TypeGraphValue t) = t
-  typeConstr <- multiArgFunction (length typeArgs) (\typeArgVals -> return $ expandNewType defn (map valueToType typeArgVals))
-  interpretExpr (Map.insert ("Make" ++ typeName) idFun $ Map.insert ("un" ++ typeName) idFun $ Map.insert typeName typeConstr m) (Map.insert typeName defn nts) body
+  typeConstr <- multiArgFunction (length typeArgs) (\typeArgVals -> return $ TypeGraphValue $ expandNewType defn (map valueToType typeArgVals))
+  interpretExpr (Map.insert ("Make" ++ typeName) idFun $ Map.insert ("un" ++ typeName) idFun $ Map.insert ("T" ++ typeName) (const $ return typeConstr) m) (Map.insert typeName defn nts) body
+
+interpretExpr _ _ other = error $ "Cannot interpret expr " ++ show other
 
 notVar :: VarId -> GraphBuilder Value VarId
 notVar x = do
@@ -366,13 +357,13 @@ fmapNewtype (AppTExpr (AppTExpr (ConstTExpr "->") argtype) rettype) v f (LambdaG
 const2 = const . const
 
 defaultContext :: Map String (Map String NewTypeDefinition -> GraphBuilder Value GraphValue)
-defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b >>= cloneWithNewVars, c))) [
+defaultContext = Map.fromList [
   -- unify :: a -> a -> a
   -- conditions on its arguments being equal, returning one of them
   ("unify",
    const $ return $ LambdaGraphValue $ \v1 ->
      return $ LambdaGraphValue $ \v2 -> unifyGraphValues v1 v2),
-  ("_unit", return (ConstTExpr "_Unit"), const2 $ return UnitGraphValue),
+  ("_unit", const $ return UnitGraphValue),
   ("_fst",
    const $ return $ LambdaGraphValue $ \(PairGraphValue first _) -> return first),
   ("_snd",
@@ -385,6 +376,12 @@ defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b >>= cloneWithNewVars, 
   ("_right",
    const $ return $ LambdaGraphValue $ \value -> return $ PureRightGraphValue value),
   ("_either",
+   let getResult (PureLeftGraphValue leftVal) leftHandler rightHandler = leftHandler leftVal
+       getResult (PureRightGraphValue rightVal) leftHandler rightHandler = rightHandler rightVal
+       getResult (EitherGraphValue isRightVar leftVal rightVal) leftHandler rightHandler = do
+         leftResult <- leftHandler leftVal
+         rightResult <- rightHandler rightVal
+         ifThenElse isRightVar leftResult rightResult
    in const $ return $ LambdaGraphValue $ \eitherValue ->
      return $ LambdaGraphValue $ \(LambdaGraphValue leftHandler) ->
        return $ LambdaGraphValue $ \(LambdaGraphValue rightHandler) ->
@@ -430,19 +427,22 @@ defaultContext = Map.fromList $ map (\(a, b, c) -> (a, (b >>= cloneWithNewVars, 
      v <- newVar gaussianValueExpFam
      newFactor (expFamFactor gaussianValueExpFam [] ([0.0, -0.5], [[]])) [v]
      return $ VarGraphValue v),
-  ("Double", const $ return $ TypeGraphValue $ ConstTExpr "Double"),
-  ("Bool", const $ return $ TypeGraphValue $ ConstTExpr "Bool"),
+  ("TDouble", const $ return $ TypeGraphValue $ ConstTExpr "Double"),
   -- TODO: somehow this has to be lazy.  See what it's called with, then
   -- make a different function for each?  Or just take arg type as an argument.
   ("randFunction",
    \nts ->
-     return $ LambdaGraphValue $ \(TypeGraphValue argType) ->
-       return $ LambdaGraphValue $ \(TypeGraphValue resType) -> do
-         let argExpFams = typeToExpFams nts argType
-             resExpFams = typeToExpFams nts resType
-         rfs <- mapM (flip newRandFun argExpFams) resExpFams
-         return $ LambdaGraphValue $ \argValue -> do
-           let argVars = graphValueEmbeddedVars argValue
-           resVars <- mapM (flip newSampleFromRandFun argVars) rfs
-           return $ varsToGraphValue nts resType resVars)
+     return $ LambdaGraphValue $ \argTypeValue -> case argTypeValue of
+       TypeGraphValue argType -> return $ LambdaGraphValue $ \resTypeValue -> case resTypeValue of
+         TypeGraphValue resType -> do
+           let argExpFams = typeToExpFams nts argType
+               resExpFams = typeToExpFams nts resType
+           rfs <- mapM (flip newRandFun argExpFams) resExpFams
+           return $ LambdaGraphValue $ \argValue -> do
+             let argVars = graphValueEmbeddedVars argValue
+             resVars <- mapM (flip newSampleFromRandFun argVars) rfs
+             return $ varsToGraphValue nts resType resVars
+         other -> error $ "randFunction called with non-type second argument " ++ show other
+       other -> error $ "randFunction called with non-type first argument " ++ show other
+  )
   ]
