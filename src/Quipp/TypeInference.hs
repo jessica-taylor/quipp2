@@ -33,7 +33,7 @@ instance Show TypeExpr where
 type NewTypeDefinition = (String, [String], TypeExpr)
 
   -- Un-annotated expressions.
-data Expr = VarExpr String | WithTypeExpr Expr TypeExpr | LambdaExpr String Expr | AppExpr Expr Expr | DefExpr String Expr Expr | LiteralExpr Value | NewTypeExpr NewTypeDefinition Expr deriving (Eq, Ord)
+data Expr = VarExpr String | WithTypeExpr Expr TypeExpr | LambdaExpr String Expr | AppExpr Expr Expr | DefExpr [(String, Expr)] Expr | LiteralExpr Value | NewTypeExpr NewTypeDefinition Expr deriving (Eq, Ord)
 
 instance Show Expr where
   showsPrec _ (VarExpr v) = showString v
@@ -46,8 +46,8 @@ instance Show Expr where
     showParen (p > 1) $ showString "let " . showString s . showString " = " . showsPrec 0 v . showString ";\n" . showsPrec 0 b
   showsPrec p (AppExpr a b) =
     showParen (p > 10) $ showsPrec 10 a . showString " " . showsPrec 11 b
-  showsPrec p (DefExpr s v b) =
-    showParen (p > 1) $ showString "def " . showString s . showString " = " . showsPrec 0 v . showString ";\n" . showsPrec 0 b
+  showsPrec p (DefExpr varvals b) =
+    showParen (p > 1) $ showString "def " . (foldr1 (.) [showString s . showString " = " . showsPrec 0 v . showString ";\n" | (s, v) <- varvals]) . showsPrec 0 b
   showsPrec p (NewTypeExpr (name, params, inner) body) =
     showParen (p > 1) $ showString "newtype " . showString (unwords (name : params)) . showString " = " . showsPrec 0 inner . showString ";\n" . showsPrec 0 body
 
@@ -179,8 +179,9 @@ interpretExpr m nts (AppExpr fun arg) = do
     LambdaGraphValue f -> interpretExpr m nts arg >>= f
     _ -> error "Function in application expression is not actually a function"
 
-interpretExpr m nts (DefExpr var value body) = do
-  interpretExpr (Map.insert var (\_ -> interpretExpr m nts value) m) nts body
+interpretExpr m nts (DefExpr varvals body) = do
+  let newM = insertAll [(var, \_ -> interpretExpr newM nts val) | (var, val) <- varvals] m
+  interpretExpr newM nts body
 
 interpretExpr m nts (LiteralExpr value) = do
   var <- newVar (expFamForType (simpleValueType value))

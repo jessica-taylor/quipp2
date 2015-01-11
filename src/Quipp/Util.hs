@@ -7,6 +7,8 @@ import Control.Monad.Identity
 import Debug.Trace
 import Data.Function (on)
 import Data.List (groupBy, sortBy)
+import Data.Map (Map)
+import qualified Data.Map as Map
 import Data.Random (RandomSource, RVarT, RVar, StdRandom(StdRandom), runRVar, runRVarT, runRVarTWith, stdUniform)
 import qualified Data.Packed.Matrix as Mat
 import Numeric.LinearAlgebra.Algorithms (linearSolve, pinv)
@@ -16,6 +18,9 @@ import System.Random (StdGen, mkStdGen)
 fst3 (a, _, _) = a
 snd3 (_, b, _) = b
 thd3 (_, _, c) = c
+
+insertAll :: Ord k => [(k, v)] -> Map k v -> Map k v
+insertAll kvs m = foldr (\(k, v) m -> Map.insert k v m) m kvs
 
 infixr 9 .:
 (f .: g) x y = f (g x y)

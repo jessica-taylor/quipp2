@@ -29,6 +29,9 @@ type AdtDefinition = (String, [String], [(String, [TypeExpr])])
 varList :: [String]
 varList = ["x_" ++ show i | i <- [0..]]
 
+makeLetExpr :: String -> Expr -> Expr -> Expr
+makeLetExpr var value body = AppExpr (LambdaExpr var body) value
+
 type ParseContext = Map String AdtDefinition
 
 translateNonRecursiveAdtDefinition :: AdtDefinition -> Expr -> Expr
@@ -42,7 +45,7 @@ translateNonRecursiveAdtDefinition (name, params, cases) body =
               rightsAndLeft | i == length cases - 1 = funPow i rightExpr
                             | otherwise = leftExpr . funPow i rightExpr
   in NewTypeExpr (name, params, foldr1 eitherType [nestedTuple (ConstTExpr "_Unit") pairType ts | (_, ts) <- cases])
-      $ foldr (\(i, (constrName, ts)) -> DefExpr constrName (getConstr i ts)) body (zip [0..] cases)
+      $ foldr (\(i, (constrName, ts)) -> makeLetExpr constrName (getConstr i ts)) body (zip [0..] cases)
 
 translateRecursiveAdtDefinition :: AdtDefinition -> Expr -> Expr
 translateRecursiveAdtDefinition (name, params, cases) body =
@@ -57,7 +60,7 @@ translateRecursiveAdtDefinition (name, params, cases) body =
         where vars = take (length ts) varList
   in translateNonRecursiveAdtDefinition (name ++ "F", params ++ [recVar], map fixCase cases) $
        NewTypeExpr (name, params, AppTExpr (ConstTExpr "Mu") (foldl AppTExpr (ConstTExpr (name ++ "F")) $ map VarTExpr params)) $
-         foldr (\cas b -> DefExpr (fst cas) (getConstr cas) b) body cases
+         foldr (\cas b -> makeLetExpr (fst cas) (getConstr cas) b) body cases
 
 
 data PatternExpr = VarPExpr String | ConstrPExpr String [PatternExpr] deriving (Eq, Ord, Show)
@@ -267,13 +270,13 @@ letExpr ctx = do
   stringWithBreak "let"
   (var, value) <- definition ctx
   body <- expr ctx
-  return $ AppExpr (LambdaExpr var body) value
+  return $ makeLetExpr var value body
 
 defExpr ctx = do
   stringWithBreak "def"
-  (var, value) <- definition ctx
+  varvalues <- definition ctx `sepBy1` spacedString ","
   body <- expr ctx
-  return $ DefExpr var value body
+  return $ DefExpr varvalues body
 
 newTypeExpr ctx = do
   stringWithBreak "newtype"

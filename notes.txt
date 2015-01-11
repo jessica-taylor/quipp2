@@ -1,3 +1,37 @@
+EXAMPLES:
+
+logistic regression
+linear regression
+
+naive Bayes
+
+Gaussian discriminant analysis
+
+clustering (nd)
+hidden markov model (n states)
+
+PCFG
+
+factor analysis
+
+independent component analysis
+
+simple neural network
+
+
+-----------------
+recursion
+
+
+def x = y,
+    y = x;
+
+def frec x = y,
+         y = x;
+
+
+
+------------------
 notes on adts
 
 
