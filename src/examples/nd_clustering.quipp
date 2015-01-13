@@ -1,7 +1,11 @@
 
-let t = iterate 1N (TPair TDouble) TDouble;
+let dim = 10N;
+let nclusters = 3N;
+let pointType = iterate dim (TPair TDouble) TUnit;
+let clusterType = iterate nClusters TMaybe TVoid;
 
-let fun = randFunction TBool t;
+let getPoint = randFunction clusterType pointType;
 \_ ->
-let b = uniformBool ();
-(b, fun b)
+let cluster = uniform clusterType;
+(cluster, getPoint getCluster)
+

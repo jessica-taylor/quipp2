@@ -1,9 +1,13 @@
-let initState = _uniformBool;
-let trans = randFunction _unit;
-let obs = randFunction _unit;
+let stateType = categorical 5N;
+let obsType = categorical 7N;
+let transFun = randFunction stateType stateType;
+let obsFun = randFunction stateType obsType;
 \un ->
-let x1 = (initState _unit : Bool);
-let x2 = (trans x1 : Bool);
-let x3 = trans x2;
-let x4 = trans x3;
-_pair (_pair x1 (_pair x2 (_pair x3 x4))) (_pair (obs x1 : Bool) (_pair (obs x2) (_pair (obs x3) (obs x4))))
+
+def statesFrom n s = case n {
+  Z -> Cons s Nil;
+  S n1 -> Cons s (statesFrom n1 (transFun s));
+};
+
+let states = statesFrom 10N (uniform stateType);
+(states, map obsFun states)

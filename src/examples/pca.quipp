@@ -1,4 +1,0 @@
-let fun = randFunction unit;
-\un ->
-let x = standardNormal unit;
-pair x (fun x : Pair Double Double)

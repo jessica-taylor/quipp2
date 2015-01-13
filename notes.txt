@@ -20,6 +20,39 @@ simple neural network
 
 
 -----------------
+
+idea: further separate types and values
+no mu values!
+catamorphisms depend on type
+
+type CompoundValueDistr = [(VarId, String, [GraphValue])]
+
+data GraphValue = ... | CompoundGraphValue CompoundValueDistr
+
+ifThenElse pvar (CompoundGraphValue alts1) (CompoundGraphValue alts2) =
+  -- find the union of alternatives
+  -- for each one appearing in only one, we take an and of different vars
+  -- for each one appearing in both, we take ands of different vars for both
+     ways we could get it, and then take an if-then-else of both
+
+example:
+  x = if xp then A foo else B barx
+  y = if yp then B bary else C baz
+  if p then x else y =
+  if (if p then xp else false) then A
+  else if (if p then true else yp) then B (if p then barx else bary)
+  else C baz
+
+idea: standardize to alphabetize constructors
+
+type Pat a b = a -> Maybe b
+
+MaybePat :: Pat a b -> Pat (Maybe a) b
+MaybePat p (Just x) = p x
+MaybePat p Nothing = Nothing
+
+
+-----------------
 recursion
 
 

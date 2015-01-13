@@ -165,7 +165,7 @@ casesToExpr depth ex cases =
     Just (lens, Nothing) ->
       let (leftCases, rightCases) = partitionCases lens cases'
           handler cs = LambdaExpr varname $ casesToExpr (depth + 1) (modifyLensExpr lens (LambdaExpr "__ignored" (VarExpr varname)) ex) cs
-      in trace ("\nLRC: " ++ show (leftCases, rightCases)) $ foldl1 AppExpr [VarExpr "_either", lensToExpr lens ex, handler leftCases, handler rightCases]
+      in trace $ foldl1 AppExpr [VarExpr "_either", lensToExpr lens ex, handler leftCases, handler rightCases]
     Just (lens, Just ntname) | take 4 ntname == "Make" ->
       let newCases = map (expandNewtypeCase lens ntname) cases'
       in casesToExpr (depth + 1) (modifyLensExpr lens (VarExpr ("un" ++ drop 4 ntname)) ex) newCases

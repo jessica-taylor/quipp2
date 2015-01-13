@@ -94,8 +94,9 @@ simpleValueType (BoolValue _) = ConstTExpr "Bool"
 -- perhaps the rest should be split up?
 --
 
+type CompoundValueDistr = [(VarId, String, [GraphValue])]
 
-data GraphValue = VarGraphValue VarId | LambdaGraphValue (GraphValue -> GraphBuilder Value GraphValue) | UnitGraphValue | PairGraphValue GraphValue GraphValue | EitherGraphValue VarId GraphValue GraphValue | PureLeftGraphValue GraphValue | PureRightGraphValue GraphValue | MuGraphValue NewTypeDefinition GraphValue | TypeGraphValue TypeExpr
+data GraphValue = VarGraphValue VarId | LambdaGraphValue (GraphValue -> GraphBuilder Value GraphValue) | UnitGraphValue | PairGraphValue GraphValue GraphValue | EitherGraphValue VarId GraphValue GraphValue | PureLeftGraphValue GraphValue | PureRightGraphValue GraphValue | MuGraphValue NewTypeDefinition GraphValue | TypeGraphValue TypeExpr | CompoundGraphValue CompoundValueDistr
 
 data FrozenGraphValue = FValueGraphValue Value | FUnitGraphValue | FPairGraphValue FrozenGraphValue FrozenGraphValue | FLeftGraphValue FrozenGraphValue | FRightGraphValue FrozenGraphValue | FMuGraphValue NewTypeDefinition FrozenGraphValue | FTypeGraphValue TypeExpr deriving (Eq, Ord)
 
