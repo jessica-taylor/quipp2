@@ -29,6 +29,8 @@ type CompoundValueDistr = [(VarId, String, [GraphValue])]
 
 data GraphValue = ... | CompoundGraphValue CompoundValueDistr
 
+unify types with compound values?
+
 ifThenElse pvar (CompoundGraphValue alts1) (CompoundGraphValue alts2) =
   -- find the union of alternatives
   -- for each one appearing in only one, we take an and of different vars

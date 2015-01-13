@@ -96,53 +96,44 @@ simpleValueType (BoolValue _) = ConstTExpr "Bool"
 
 type CompoundValueDistr = [(VarId, String, [GraphValue])]
 
-data GraphValue = VarGraphValue VarId | LambdaGraphValue (GraphValue -> GraphBuilder Value GraphValue) | UnitGraphValue | PairGraphValue GraphValue GraphValue | EitherGraphValue VarId GraphValue GraphValue | PureLeftGraphValue GraphValue | PureRightGraphValue GraphValue | MuGraphValue NewTypeDefinition GraphValue | TypeGraphValue TypeExpr | CompoundGraphValue CompoundValueDistr
+data GraphValue = VarGraphValue VarId | LambdaGraphValue (GraphValue -> GraphBuilder Value GraphValue) | TypeGraphValue TypeExpr | CompoundGraphValue CompoundValueDistr
 
-data FrozenGraphValue = FValueGraphValue Value | FUnitGraphValue | FPairGraphValue FrozenGraphValue FrozenGraphValue | FLeftGraphValue FrozenGraphValue | FRightGraphValue FrozenGraphValue | FMuGraphValue NewTypeDefinition FrozenGraphValue | FTypeGraphValue TypeExpr deriving (Eq, Ord)
+data FrozenGraphValue = FValueGraphValue Value | FCompoundGraphValue String [FrozenGraphValue] | FTypeGraphValue TypeExpr deriving (Eq, Ord)
+
+showCompound :: Show f => (VarId, String, [f]) -> String
+showCompound c fs = c ++ concatMap ((' ':) . show) fs
 
 instance Show GraphValue where
   show (VarGraphValue varid) = "$" ++ show varid
   show (LambdaGraphValue _) = "#lambda"
-  show UnitGraphValue = "()"
-  show (PairGraphValue a b) = "(" ++ show a ++ ", " ++ show b ++ ")"
-  show (EitherGraphValue varid left right) = "if " ++ show varid ++ " then Left " ++ show left ++ " else Right " ++ show right
-  show (PureLeftGraphValue left) = "(Left " ++ show left ++ ")"
-  show (PureRightGraphValue right) = "(Right " ++ show right ++ ")"
-  show (MuGraphValue _ v) = "(Mu " ++ show v ++ ")"
+  show (CompoundGraphValue []) = "<undefined>"
+  show (CompoundGraphValue [(v, c, fs)]) = "(" ++ showCompound c fs ++ ")"
+  show (CompoundGraphValue ((v, c, fs):rest) =
+    "(if $" ++ show v ++ " then " ++ showCompound c fs ++ " else " ++ show (CompoundGraphValue rest) ++ ")"
   show (TypeGraphValue t) = "#" ++ show t
 
 instance Show FrozenGraphValue where
   show (FValueGraphValue v) = show v
-  show FUnitGraphValue = "()"
-  show (FPairGraphValue a b) = "(" ++ show a ++ ", " ++ show b ++ ")"
-  show (FLeftGraphValue a) = "(Left " ++ show a ++ ")"
-  show (FRightGraphValue b) = "(Right " ++ show b ++ ")"
-  show (FMuGraphValue _ v) = "(Mu " ++ show v ++ ")"
+  show (FCompoundGraphValue c fs) = "(" ++ showCompound c fs ++ ")"
   show (FTypeGraphValue t) = "#" ++ show t
 
 freezeGraphValue :: (VarId -> Value) -> GraphValue -> FrozenGraphValue
 freezeGraphValue _ UnitGraphValue = FUnitGraphValue
 freezeGraphValue f (VarGraphValue v) = FValueGraphValue $ f v
-freezeGraphValue f (PairGraphValue a b) = FPairGraphValue (freezeGraphValue f a) (freezeGraphValue f b)
-freezeGraphValue f (EitherGraphValue c l r) = case f c of
-  BoolValue False -> FLeftGraphValue (freezeGraphValue f l)
-  BoolValue True -> FRightGraphValue (freezeGraphValue f r)
-  other -> error ("Bad boolean: " ++ show other)
-freezeGraphValue f (PureLeftGraphValue l) = FLeftGraphValue (freezeGraphValue f l)
-freezeGraphValue f (PureRightGraphValue r) = FRightGraphValue (freezeGraphValue f r)
-freezeGraphValue f (MuGraphValue def v) = FMuGraphValue def (freezeGraphValue f v)
 freezeGraphValue _ (TypeGraphValue t) = FTypeGraphValue t
+freezeGraphValue f (CompoundGraphValue []) = undefined
+freezeGraphValue f (CompoundGraphValue ((v, c, fs):rest)) = case f v of
+  BoolValue True -> FCompoundGraphValue c (map (freezeGraphValue f) fs)
+  BoolValue False -> freezeGraphValue f (CompoundGraphValue rest)
 freezeGraphValue _ other = error "Cannot freeze lambdas"
 
 unfreezeGraphValue :: FrozenGraphValue -> GraphBuilder Value GraphValue
-unfreezeGraphValue FUnitGraphValue = return UnitGraphValue
+unfreezeGraphValue (FCompoundGraphValue c fs) = do
+  constTrue <- constValue boolValueExpFam (BoolValue False)
+  fs' <- mapM unfreezeGraphValue fs
+  return $ CompoundGraphValue [(constTrue, c, fs')]
 unfreezeGraphValue (FValueGraphValue value) =
   VarGraphValue <$> constValue (expFamForType (simpleValueType value)) value
-unfreezeGraphValue (FPairGraphValue a b) =
-  PairGraphValue <$> unfreezeGraphValue a <*> unfreezeGraphValue b
-unfreezeGraphValue (FLeftGraphValue value) = PureLeftGraphValue <$> unfreezeGraphValue value
-unfreezeGraphValue (FRightGraphValue value) = PureRightGraphValue <$> unfreezeGraphValue value
-unfreezeGraphValue (FMuGraphValue def v) = MuGraphValue def <$> unfreezeGraphValue  v
 unfreezeGraphValue (FTypeGraphValue t) = return $ TypeGraphValue t
 unfreezeGraphValue other = error ("Cannot freeze " ++ show other)
 
@@ -177,10 +168,11 @@ interpretExpr m nts (LambdaExpr param body) = return $ LambdaGraphValue $
 
 interpretExpr m nts (AppExpr fun arg) = do
   funVal <- interpretExpr m nts fun
+  argVal <- interpretExpr m nts arg
   case funVal of
-    LambdaGraphValue f -> interpretExpr m nts arg >>= f
+    LambdaGraphValue f -> f argVal
+    CompoundGraphValue alts = CompoundGraphValue $ [(v, c, fs ++ [argVal]) | (v, c, fs) <- alts]
     TypeGraphValue ft -> do
-      argVal <- interpretExpr m nts arg
       case argVal of
         TypeGraphValue at -> return $ TypeGraphValue (AppTExpr ft at)
         _ -> error $ "Cannot apply type to non-type " ++ show argVal
@@ -199,7 +191,6 @@ interpretExpr m nts (TypeLiteralExpr t) = return $ TypeGraphValue t
 
 interpretExpr m nts (NewTypeExpr defn@(typeName, typeArgs, innerType) body) = do
   let wrappedType = foldl AppTExpr (ConstTExpr typeName) (map VarTExpr typeArgs)
-  let idFun = const $ return $ LambdaGraphValue $ \x -> return x
   let valueToType (TypeGraphValue t) = t
   interpretExpr (Map.insert ("Make" ++ typeName) idFun $ Map.insert ("un" ++ typeName) idFun $ Map.insert ("T" ++ typeName) (const $ return $ TypeGraphValue $ ConstTExpr typeName) m) (Map.insert typeName defn nts) body
 
@@ -211,48 +202,27 @@ notVar x = do
   newFactor notFactor [y, x]
   return y
 
-ifThenElse _ UnitGraphValue UnitGraphValue = return UnitGraphValue
+ifThenElse pvar (CompoundGraphValue left) (CompoundGraphValue right) =
+  let oneSideOnly flipper ((lv, lc, lf):lrest) rrest = do
+        rv <- constValue boolValueExpFam (BoolValue False)
+        VarGraphValue v' <- flipper (ifThenElse pvar) (VarGraphValue lv) (VarGraphValue rv)
+        rest <- flipper (ifThenElse pvar) (CompoundGraphValue lrest) rrest
+        return $ CompoundGraphValue ((v', lc, lf):rest)
+      leftOnly = oneSideOnly id left right
+      rightOnly l r = oneSideOnly flip right left
+  case (left, right) of
+    ([], []) -> return $ CompoundGraphValue []
+    (_, []) -> leftOnly
+    ([], _) -> rightOnly
+    ((lv, lc, lf):lrest, (rv, rc, rf):rrest) -> case compare (lc, length lf) (rc, length rf) of
+      LT -> leftOnly
+      GT -> rightOnly
+      EQ -> do
+        VarGraphValue v' <- ifThenElse pvar (VarGraphValue lv) (VarGraphValue rv)
+        firstFields <- zipWithM (ifThenElse pvar) lf rf
+        rest <- ifThenElse pvar (CompoundGraphValue lrest) (CompoundGraphValue rrest)
+        return $ CompoundGraphValue ((v', lc, firstFields) : rest)
 
-ifThenElse pvar (PairGraphValue a b) (PairGraphValue c d) = do
-  first <- ifThenElse pvar a c
-  second <- ifThenElse pvar b d
-  return $ PairGraphValue first second
-
-ifThenElse pvar (EitherGraphValue p1 a b) (EitherGraphValue p2 c d) = do
-  VarGraphValue p' <- ifThenElse pvar (VarGraphValue p1) (VarGraphValue p2)
-  left <- ifThenElse pvar a c
-  right <- ifThenElse pvar b d
-  return $ EitherGraphValue p' left right
-
-ifThenElse pvar (PureLeftGraphValue a) (PureLeftGraphValue b) =
-  PureLeftGraphValue <$> ifThenElse pvar a b
-
-ifThenElse pvar (PureRightGraphValue a) (PureRightGraphValue b) =
-  PureRightGraphValue <$> ifThenElse pvar a b
-
-ifThenElse pvar (PureLeftGraphValue a) (PureRightGraphValue b) =
-  return $ EitherGraphValue pvar a b
-
-ifThenElse pvar (PureRightGraphValue a) (PureLeftGraphValue b) =
-  EitherGraphValue <$> notVar pvar <*> return a <*> return b
-
-ifThenElse pvar (PureLeftGraphValue a) (EitherGraphValue p b c) = do
-  leftp <- constValue boolValueExpFam (BoolValue False)
-  VarGraphValue p' <- ifThenElse pvar (VarGraphValue leftp) (VarGraphValue p)
-  EitherGraphValue p' <$> ifThenElse pvar a b <*> return c
-
-ifThenElse pvar e@(EitherGraphValue _ _ _) l@(PureLeftGraphValue _) = do
-  pvar' <- notVar pvar
-  ifThenElse pvar' l e
-
-ifThenElse pvar (PureRightGraphValue a) (EitherGraphValue p b c) = do
-  rightp <- constValue boolValueExpFam (BoolValue True)
-  VarGraphValue p' <- ifThenElse pvar (VarGraphValue rightp) (VarGraphValue p)
-  EitherGraphValue p' b <$> ifThenElse pvar a c
-
-ifThenElse pvar e@(EitherGraphValue _ _ _) r@(PureRightGraphValue _) = do
-  pvar' <- notVar pvar
-  ifThenElse pvar' r e
 
 ifThenElse pvar (LambdaGraphValue f) (LambdaGraphValue g) =
   return $ LambdaGraphValue $ \x -> do
@@ -266,32 +236,29 @@ ifThenElse pvar (VarGraphValue v1) (VarGraphValue v2) = do
   newFactor (ifThenElseFactor ef) [v3, pvar, v1, v2]
   return (VarGraphValue v3)
 
-ifThenElse pvar (MuGraphValue d1 v1) (MuGraphValue d2 v2)
-  | d1 == d2 = MuGraphValue d1 <$> ifThenElse pvar v1 v2
-  | otherwise = error "Mu definitions do not match"
+ifThenElse pvar left right = error $ "Cannot have an if-then-else that might return objects of different types: " ++ show left ++ ", " ++ show right
 
 unifyGraphValues :: GraphValue -> GraphValue -> GraphBuilder Value GraphValue
 unifyGraphValues (VarGraphValue a) (VarGraphValue b) = liftM VarGraphValue $ conditionEqual a b
-unifyGraphValues (PairGraphValue a b) (PairGraphValue c d) =
-  PairGraphValue <$> unifyGraphValues a c <*> unifyGraphValues b d
-unifyGraphValues (EitherGraphValue a b c) (EitherGraphValue d e f) =
-  EitherGraphValue <$> conditionEqual a d <*> unifyGraphValues b e <*> unifyGraphValues c f
-unifyGraphValues (PureLeftGraphValue a) (PureLeftGraphValue b) =
-  unifyGraphValues a b
-unifyGraphValues (PureRightGraphValue a) (PureRightGraphValue b) =
-  unifyGraphValues a b
-unifyGraphValues (PureLeftGraphValue a) (EitherGraphValue b c d) = do
-  newConstFactor b (BoolValue False)
-  unifyGraphValues a c
-unifyGraphValues (PureRightGraphValue a) (EitherGraphValue b c d) = do
-  newConstFactor b (BoolValue True)
-  unifyGraphValues a d
-unifyGraphValues a@(EitherGraphValue _ _ _) b@(PureLeftGraphValue _) =
-  unifyGraphValues b a
-unifyGraphValues a@(EitherGraphValue _ _ _) b@(PureRightGraphValue _) =
-  unifyGraphValues b a
-unifyGraphValues UnitGraphValue UnitGraphValue = return UnitGraphValue
-unifyGraphValues (MuGraphValue _ v1) (MuGraphValue _ v2) = unifyGraphValues v1 v2
+unifyGraphValues (CompoundGraphValue left) (CompoundGraphValue right) =
+  let oneSideOnly ((lv, lc, lf):lrest) rrest = do
+        rv <- constValue boolValueExpFam (BoolValue False)
+        conditionEqual lv rv
+        unifyGraphValues (CompoundGraphValue lrest) (CompoundGraphValue rrest)
+      leftOnly = oneSideOnly left right
+      rightOnly l r = oneSideOnly right left
+  case (left, right) of
+    ([], []) -> return $ CompoundGraphValue []
+    (_, []) -> leftOnly
+    ([], _) -> rightOnly
+    ((lv, lc, lf):lrest, (rv, rc, rf):rrest) -> case compare (lc, length lf) (rc, length rf) of
+      LT -> leftOnly
+      GT -> rightOnly
+      EQ -> do
+        v' <- conditionEqual lv rv
+        fs' <- zipWithM conditionEqual lf rf
+        rest' <- unifyGraphValues (CompoundGraphValue lrest) (CompoundGraphValue rrest)
+        return $ CompoundGraphValue ((v', lc, fs') : rest')
 unifyGraphValues v1 v2 = error ("Cannot unify values " ++ show v1 ++ " and " ++ show v2)
 
 
