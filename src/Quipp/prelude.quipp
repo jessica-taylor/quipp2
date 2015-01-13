@@ -2,6 +2,13 @@ data Unit = Unit;
 data Bool = False | True;
 data Pair x y = Pair x y;
 data Either x y = Left x | Right y;
+data rec Nat = Z | S Nat;
+
+def iterate n f x = case n {
+  Z -> x;
+  S m -> f (iterate m f x);
+};
+
 def fst pair = case pair { Pair x y -> x; };
 def snd pair = case pair { Pair x y -> y; };
 def if cond then else = case cond { True -> then; False -> else; };

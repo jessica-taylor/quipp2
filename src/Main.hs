@@ -27,7 +27,7 @@ example1dClustering = ("1d_clustering.quipp", map (FValueGraphValue . DoubleValu
   1.0, 1.1, 1.2, 1.4, 6.7, 7.9, 8.9, 5.0
   ])
 
-example2dClustering points = ("2d_clustering.quipp", map (uncurry (FPairGraphValue `on` (FValueGraphValue . DoubleValue))) points)
+example2dClustering points = ("nd_clustering.quipp", map (uncurry (FPairGraphValue `on` (FValueGraphValue . DoubleValue))) points)
 --  (1.5, 11.0), (2.2, 10.5), (1.4, 9.8), (2.5, 20.5), (5.3, 22.7),
 --  (1.1, 18.6), (2.3, 21.7), (3.5, 23.8), (4.3, 25.3), (5.5, 28.0)
 --  ])

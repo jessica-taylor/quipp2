@@ -51,15 +51,16 @@ translateRecursiveAdtDefinition :: AdtDefinition -> Expr -> Expr
 translateRecursiveAdtDefinition (name, params, cases) body =
   let recVar = name ++ "_rec"
       fixCase (caseName, ts) = (caseName ++ "F", map fixType ts)
-      recType = foldl AppTExpr (ConstTExpr name) $ map VarTExpr (name:params)
+      recType = foldl AppTExpr (ConstTExpr name) $ map VarTExpr params
       fixType t | t == recType = VarTExpr recVar
       fixType (AppTExpr fun arg) = AppTExpr (fixType fun) (fixType arg)
       fixType (ConstTExpr t) | t == name = error $ "Cannot handle polymorphic recursion in type " ++ name
       fixType other = other
-      getConstr (caseName, ts) = foldr LambdaExpr (AppExpr (VarExpr "mu") $ foldl1 AppExpr $ map VarExpr ((caseName ++ "F"):vars)) vars
+      functorType = foldl AppTExpr (ConstTExpr (name ++ "F")) $ map VarTExpr params
+      getConstr (caseName, ts) = foldr LambdaExpr (AppExpr (AppExpr (VarExpr "mu") (TypeLiteralExpr functorType)) $ foldl1 AppExpr $ map VarExpr ((caseName ++ "F"):vars)) vars
         where vars = take (length ts) varList
   in translateNonRecursiveAdtDefinition (name ++ "F", params ++ [recVar], map fixCase cases) $
-       NewTypeExpr (name, params, AppTExpr (ConstTExpr "Mu") (foldl AppTExpr (ConstTExpr (name ++ "F")) $ map VarTExpr params)) $
+       NewTypeExpr (name, params, AppTExpr (ConstTExpr "Mu") functorType) $
          foldr (\cas b -> makeLetExpr (fst cas) (getConstr cas) b) body cases
 
 

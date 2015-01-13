@@ -33,7 +33,7 @@ instance Show TypeExpr where
 type NewTypeDefinition = (String, [String], TypeExpr)
 
   -- Un-annotated expressions.
-data Expr = VarExpr String | WithTypeExpr Expr TypeExpr | LambdaExpr String Expr | AppExpr Expr Expr | DefExpr [(String, Expr)] Expr | LiteralExpr Value | NewTypeExpr NewTypeDefinition Expr deriving (Eq, Ord)
+data Expr = VarExpr String | WithTypeExpr Expr TypeExpr | LambdaExpr String Expr | AppExpr Expr Expr | DefExpr [(String, Expr)] Expr | LiteralExpr Value | TypeLiteralExpr TypeExpr | NewTypeExpr NewTypeDefinition Expr deriving (Eq, Ord)
 
 instance Show Expr where
   showsPrec _ (VarExpr v) = showString v
@@ -50,6 +50,7 @@ instance Show Expr where
     showParen (p > 1) $ showString "def " . (foldr1 (.) [showString s . showString " = " . showsPrec 0 v . showString ";\n" | (s, v) <- varvals]) . showsPrec 0 b
   showsPrec p (NewTypeExpr (name, params, inner) body) =
     showParen (p > 1) $ showString "newtype " . showString (unwords (name : params)) . showString " = " . showsPrec 0 inner . showString ";\n" . showsPrec 0 body
+  showsPrec p (TypeLiteralExpr t) = showsPrec p t
 
 type TypeId = Int
 
@@ -129,8 +130,8 @@ freezeGraphValue f (EitherGraphValue c l r) = case f c of
 freezeGraphValue f (PureLeftGraphValue l) = FLeftGraphValue (freezeGraphValue f l)
 freezeGraphValue f (PureRightGraphValue r) = FRightGraphValue (freezeGraphValue f r)
 freezeGraphValue f (MuGraphValue def v) = FMuGraphValue def (freezeGraphValue f v)
-freezeGraphValue _ other = error "Cannot freeze lambdas"
 freezeGraphValue _ (TypeGraphValue t) = FTypeGraphValue t
+freezeGraphValue _ other = error "Cannot freeze lambdas"
 
 unfreezeGraphValue :: FrozenGraphValue -> GraphBuilder Value GraphValue
 unfreezeGraphValue FUnitGraphValue = return UnitGraphValue
@@ -141,8 +142,8 @@ unfreezeGraphValue (FPairGraphValue a b) =
 unfreezeGraphValue (FLeftGraphValue value) = PureLeftGraphValue <$> unfreezeGraphValue value
 unfreezeGraphValue (FRightGraphValue value) = PureRightGraphValue <$> unfreezeGraphValue value
 unfreezeGraphValue (FMuGraphValue def v) = MuGraphValue def <$> unfreezeGraphValue  v
-unfreezeGraphValue other = error ("Cannot freeze " ++ show other)
 unfreezeGraphValue (FTypeGraphValue t) = return $ TypeGraphValue t
+unfreezeGraphValue other = error ("Cannot freeze " ++ show other)
 
 expFamForType :: TypeExpr -> ExpFam Value
 expFamForType (ConstTExpr "Double") = gaussianValueExpFam
@@ -177,7 +178,12 @@ interpretExpr m nts (AppExpr fun arg) = do
   funVal <- interpretExpr m nts fun
   case funVal of
     LambdaGraphValue f -> interpretExpr m nts arg >>= f
-    _ -> error "Function in application expression is not actually a function"
+    TypeGraphValue ft -> do
+      argVal <- interpretExpr m nts arg
+      case argVal of
+        TypeGraphValue at -> return $ TypeGraphValue (AppTExpr ft at)
+        _ -> error $ "Cannot apply type to non-type " ++ show argVal
+    _ -> error $ "Function in application expression is not actually a function: " ++ show funVal
 
 interpretExpr m nts (DefExpr varvals body) = do
   let newM = insertAll [(var, \_ -> interpretExpr newM nts val) | (var, val) <- varvals] m
@@ -188,12 +194,13 @@ interpretExpr m nts (LiteralExpr value) = do
   newConstFactor var value
   return $ VarGraphValue var
 
+interpretExpr m nts (TypeLiteralExpr t) = return $ TypeGraphValue t
+
 interpretExpr m nts (NewTypeExpr defn@(typeName, typeArgs, innerType) body) = do
   let wrappedType = foldl AppTExpr (ConstTExpr typeName) (map VarTExpr typeArgs)
   let idFun = const $ return $ LambdaGraphValue $ \x -> return x
   let valueToType (TypeGraphValue t) = t
-  typeConstr <- multiArgFunction (length typeArgs) (\typeArgVals -> return $ TypeGraphValue $ expandNewType defn (map valueToType typeArgVals))
-  interpretExpr (Map.insert ("Make" ++ typeName) idFun $ Map.insert ("un" ++ typeName) idFun $ Map.insert ("T" ++ typeName) (const $ return typeConstr) m) (Map.insert typeName defn nts) body
+  interpretExpr (Map.insert ("Make" ++ typeName) idFun $ Map.insert ("un" ++ typeName) idFun $ Map.insert ("T" ++ typeName) (const $ return $ TypeGraphValue $ ConstTExpr typeName) m) (Map.insert typeName defn nts) body
 
 interpretExpr _ _ other = error $ "Cannot interpret expr " ++ show other
 
@@ -389,23 +396,20 @@ defaultContext = Map.fromList [
          getResult eitherValue leftHandler rightHandler
   ),
   -- TODO: fix these values to return MuGraphValues
-  -- ("mu",
-  --  const $ return $ LambdaGraphValue $ \resultType ->
-  --  \thisType -> case thisType of
-  --    (AppTExpr (AppTExpr (ConstTExpr "->") (AppTExpr functorType _)) _) ->
-  --      case splitAppType functorType of
-  --        (ConstTExpr functorName, _) ->
-  --         \nts -> case Map.lookup functorName nts of
-  --                   Nothing -> error ("No newtype " ++ functorName)
-  --                   Just def -> return $ LambdaGraphValue (return . MuGraphValue def)
-  --        _ -> error ("Mu cannot have type " ++ show thisType)
-  --    _ -> error ("Mu cannot have type " ++ show thisType)
-  -- ),
-  -- ("unMu",
-  --  do f <- newVarType "unMu_f"
-  --     return $ functionType (muType f) (AppTExpr f (muType f)),
-  --  const2 $ return $ LambdaGraphValue $ \(MuGraphValue _ v) -> return v
-  -- ),
+  ("mu",
+  -- TODO: let you apply typegraphvalues!
+  \nts -> return $ LambdaGraphValue $ \functorTypeValue -> case functorTypeValue of
+    TypeGraphValue functorType ->
+      case splitAppType functorType of
+        (ConstTExpr functorName, _) -> case Map.lookup functorName nts of
+          Nothing -> error ("No newtype " ++ functorName)
+          Just def -> return $ LambdaGraphValue (return . MuGraphValue def)
+        _ -> error $ "Not a valid functor: " ++ show functorType
+    _ -> error $ "Mu argument is not a type: " ++ show functorTypeValue
+  ),
+  ("unMu",
+   const $ return $ LambdaGraphValue $ \(MuGraphValue _ v) -> return v
+  ),
   -- -- cata :: Functor f => (f a -> a) -> Mu f -> a
   -- -- cata f = f . fmap (cata f) . unMu
   -- ("cata",
