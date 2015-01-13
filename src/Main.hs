@@ -50,7 +50,7 @@ main = do
           Right result -> result
       builder = interpretExpr defaultContext Map.empty resultExpr
       -- (template, result) = runGraphBuilder builder
-  -- print resultExpr
+  print resultExpr
   iters <- sampleRVar $ inferParametersFromSamples builder samples
   -- (actualParams, actualLatents, samples, iters) <- sampleRVar $ inferParameters (ParamInferenceOptions {optsNumSamples = 20}) t builder
   -- putStrLn $ "ACTUAL PARAMS: " ++ show actualParams

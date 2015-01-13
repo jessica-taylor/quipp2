@@ -390,6 +390,7 @@ defaultContext = Map.fromList [
          leftResult <- leftHandler leftVal
          rightResult <- rightHandler rightVal
          ifThenElse isRightVar leftResult rightResult
+       getResult other _ _ = error $ "Not an either: " ++ show other
    in const $ return $ LambdaGraphValue $ \eitherValue ->
      return $ LambdaGraphValue $ \(LambdaGraphValue leftHandler) ->
        return $ LambdaGraphValue $ \(LambdaGraphValue rightHandler) ->
