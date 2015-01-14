@@ -13,16 +13,15 @@ expandNonterminal nt = case nt {
   VP -> [[SN V], [SN V, SN NP]];
 };
 
-toSentence sym rest = case sym {
+def picker = memoize \nt ->
+  let alts = expandNonterminal nt;
+  let typ = tcategorical (length alts);
+  let f = randFunction TUnit typ;
+  \un -> alts !! f ();
+
+def urec toSentence sym rest = case sym {
   ST t -> Cons t rest;
-  SN n ->
-    let alts = expandNonterminal n;
-    alts !! randfun alts
+  SN nt ->
+    let parts = picker nt ();
+    foldr toSentence parts rest;
 };
-flatten_n_kind Cat rest = Cons WCat rest;
-...
-
-flatten_v_kind ...
-
-flatten_np_kind NP_N
-
