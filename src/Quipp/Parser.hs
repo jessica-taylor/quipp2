@@ -14,7 +14,7 @@ import Text.Parsec.Char
 import Text.Parsec.Combinator
 import Text.Parsec.Prim
 
-import Quipp.TypeInference
+import Quipp.Interpreter
 import Quipp.Util
 import Quipp.Value
 

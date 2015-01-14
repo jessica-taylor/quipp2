@@ -10,7 +10,7 @@ import Quipp.BayesNet
 import Quipp.ExpFam
 import Quipp.Factor
 import Quipp.GraphBuilder
-import Quipp.TypeInference
+import Quipp.Interpreter
 import Quipp.Util
 import Quipp.Value
 import Quipp.Vmp

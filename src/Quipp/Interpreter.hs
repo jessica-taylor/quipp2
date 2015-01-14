@@ -1,6 +1,6 @@
 {-# LANGUAGE TupleSections, ViewPatterns #-}
 
-module Quipp.TypeInference where
+module Quipp.Interpreter where
 
 import Debug.Trace
 import Data.Function (fix)
