@@ -30,10 +30,11 @@ instance Show TypeExpr where
   showsPrec p (AppTExpr a b) =
     showParen (p > 10) $ showsPrec 10 a . showString " " . showsPrec 11 b
 
-type NewTypeDefinition = (String, [String], TypeExpr)
+type AdtDefinition = (String, [String], [(String, [TypeExpr])])
 
-  -- Un-annotated expressions.
-data Expr = VarExpr String | WithTypeExpr Expr TypeExpr | LambdaExpr String Expr | AppExpr Expr Expr | DefExpr [(String, Expr)] Expr | LiteralExpr Value | TypeLiteralExpr TypeExpr | NewTypeExpr NewTypeDefinition Expr deriving (Eq, Ord)
+data PatternExpr = VarPExpr String | ConstrPExpr String [PatternExpr] deriving (Eq, Ord, Show)
+
+data Expr = VarExpr String | WithTypeExpr Expr TypeExpr | LambdaExpr String Expr | AppExpr Expr Expr | DefExpr [(String, Expr)] Expr | LiteralExpr Value | TypeLiteralExpr TypeExpr | AdtDefExpr AdtDefinition Expr | CaseExpr Expr [(PatternExpr, Expr)] | ErrorExpr String deriving (Eq, Ord)
 
 instance Show Expr where
   showsPrec _ (VarExpr v) = showString v
@@ -48,16 +49,16 @@ instance Show Expr where
     showParen (p > 10) $ showsPrec 10 a . showString " " . showsPrec 11 b
   showsPrec p (DefExpr varvals b) =
     showParen (p > 1) $ showString "def " . (foldr1 (.) [showString s . showString " = " . showsPrec 0 v . showString ";\n" | (s, v) <- varvals]) . showsPrec 0 b
-  showsPrec p (NewTypeExpr (name, params, inner) body) =
-    showParen (p > 1) $ showString "newtype " . showString (unwords (name : params)) . showString " = " . showsPrec 0 inner . showString ";\n" . showsPrec 0 body
+  -- TODO
+  showsPrec p (AdtDefExpr (name, params, constrs) body) =
+    showParen (p > 1) $ showString "data " . showString (unwords (name : params)) . showString " = " . showsPrec 0 constrs . showString ";\n" . showsPrec 0 body
+  showsPrec p (CaseExpr ex cases) = showString (show ("case", ex, cases))
+  showsPrec p (ErrorExpr err) = showString (show ("err", err))
   showsPrec p (TypeLiteralExpr t) = showsPrec p t
 
 type TypeId = Int
 
 functionType a b = AppTExpr (AppTExpr (ConstTExpr "->") a) b
-pairType a b = AppTExpr (AppTExpr (ConstTExpr "_Pair") a) b
-eitherType a b = AppTExpr (AppTExpr (ConstTExpr "_Either") a) b
-muType f = AppTExpr (ConstTExpr "Mu") f
 
 splitAppType :: TypeExpr -> (TypeExpr, [TypeExpr])
 splitAppType (AppTExpr a b) =
@@ -129,9 +130,9 @@ freezeGraphValue _ other = error "Cannot freeze lambdas"
 
 unfreezeGraphValue :: FrozenGraphValue -> GraphBuilder Value GraphValue
 unfreezeGraphValue (FCompoundGraphValue c fs) = do
-  constTrue <- constValue boolValueExpFam (BoolValue False)
+  true <- constTrue
   fs' <- mapM unfreezeGraphValue fs
-  return $ CompoundGraphValue [(constTrue, c, fs')]
+  return $ CompoundGraphValue [(true, c, fs')]
 unfreezeGraphValue (FValueGraphValue value) =
   VarGraphValue <$> constValue (expFamForType (simpleValueType value)) value
 unfreezeGraphValue (FTypeGraphValue t) = return $ TypeGraphValue t
@@ -146,53 +147,85 @@ multiArgFunction :: Int -> ([GraphValue] -> GraphBuilder Value GraphValue) -> Gr
 multiArgFunction 0 fn = fn []
 multiArgFunction nArgs fn = return $ LambdaGraphValue $ \firstArg -> multiArgFunction (nArgs - 1) (\restArgs -> fn (firstArg : restArgs))
 
-expandNewType :: NewTypeDefinition -> [TypeExpr] -> TypeExpr
-expandNewType (_, paramVars, inner) params =
-  reduceTypeDeepIn (foldr (uncurry Map.insert) Map.empty (zipSameLength paramVars params)) inner
+andVariables :: [VarId] -> GraphBuilder Value VarId
+andVariables [] = constTrue
+andVariables (x:xs) = do
+  true <- constTrue
+  rest <- andVariables xs
+  ifThenElse x (VarGraphValue true) (VarGraphValue rest)
+
+interpretPattern :: PatternExpr -> GraphValue -> GraphBuilder Value (VarId, [(String, GraphValue)])
+interpretPattern (VarPExpr var) value = do
+  true <- constTrue
+  return (true, [(var, value)])
+-- TODO: arity
+interpretPattern (ConstrPExpr constr fields) (CompoundGraphValue alts) = case elemIndex constr (map snd3 alts) of
+  Nothing -> do
+    false <- constFalse
+    return (false, [])
+  Just index -> do
+    let (_, _, fs) = alts !! index
+    fieldMatches <- zipWithM interpretPattern fields fs
+    andVar <- andVariables (take (index + 1) (map fst3 alts) ++ map fst fieldMatches)
+    return (andVar, concat (map snd fieldMatches))
 
 
--- interpretPattern :: PatternExpr -> GraphValue -> GraphBuilder Value (Maybe [(String, GraphValue)])
-  -- interpretPattern (VarPExpr var) value = return $ Just [(var, value)]
-  -- interpretPattern (ConstrPExpr constr 
 
-interpretExpr :: Map String (Map String NewTypeDefinition -> GraphBuilder Value GraphValue) -> Map String NewTypeDefinition -> Expr -> GraphBuilder Value GraphValue
+interpretExpr :: Map String (Map String AdtDefinition -> GraphBuilder Value GraphValue) -> Map String AdtDefinition -> Expr -> GraphBuilder Value GraphValue
 
 interpretExpr _ _ x | trace ("\ninterpret " ++ show x) False = undefined
 
-interpretExpr m nts (VarExpr var) = case Map.lookup var m of
+interpretExpr m adts (VarExpr var) = case Map.lookup var m of
   Nothing -> error ("cannot find variable " ++ var)
-  Just val -> val nts
+  Just val -> val adts
 
-interpretExpr m nts (LambdaExpr param body) = return $ LambdaGraphValue $
-  \arg -> interpretExpr (Map.insert param (const $ return arg) m) nts body
+interpretExpr m adts (LambdaExpr param body) = return $ LambdaGraphValue $
+  \arg -> interpretExpr (Map.insert param (const $ return arg) m) adts body
 
-interpretExpr m nts (AppExpr fun arg) = do
-  funVal <- interpretExpr m nts fun
-  argVal <- interpretExpr m nts arg
+interpretExpr m adts (AppExpr fun arg) = do
+  funVal <- interpretExpr m adts fun
+  argVal <- interpretExpr m adts arg
   case funVal of
     LambdaGraphValue f -> f argVal
-    CompoundGraphValue alts = CompoundGraphValue $ [(v, c, fs ++ [argVal]) | (v, c, fs) <- alts]
+    CompoundGraphValue alts = CompoundGraphValue [(v, c, fs ++ [argVal]) | (v, c, fs) <- alts]
     TypeGraphValue ft -> do
       case argVal of
         TypeGraphValue at -> return $ TypeGraphValue (AppTExpr ft at)
         _ -> error $ "Cannot apply type to non-type " ++ show argVal
     _ -> error $ "Function in application expression is not actually a function: " ++ show funVal
 
-interpretExpr m nts (DefExpr varvals body) = do
-  let newM = insertAll [(var, \_ -> interpretExpr newM nts val) | (var, val) <- varvals] m
-  interpretExpr newM nts body
+interpretExpr m adts (DefExpr varvals body) = do
+  let newM = insertAll [(var, \_ -> interpretExpr newM adts val) | (var, val) <- varvals] m
+  interpretExpr newM adts body
 
-interpretExpr m nts (LiteralExpr value) = do
+interpretExpr m adts (LiteralExpr value) = do
   var <- newVar (expFamForType (simpleValueType value))
   newConstFactor var value
   return $ VarGraphValue var
 
-interpretExpr m nts (TypeLiteralExpr t) = return $ TypeGraphValue t
+interpretExpr m adts (TypeLiteralExpr t) = return $ TypeGraphValue t
 
-interpretExpr m nts (NewTypeExpr defn@(typeName, typeArgs, innerType) body) = do
+interpretExpr m adts (AdtDefExpr defn@(typeName, typeArgs, alts) body) = do
   let wrappedType = foldl AppTExpr (ConstTExpr typeName) (map VarTExpr typeArgs)
-  let valueToType (TypeGraphValue t) = t
-  interpretExpr (Map.insert ("Make" ++ typeName) idFun $ Map.insert ("un" ++ typeName) idFun $ Map.insert ("T" ++ typeName) (const $ return $ TypeGraphValue $ ConstTExpr typeName) m) (Map.insert typeName defn nts) body
+  let defValues = [(constr, const $ unfreezeGraphValue (FCompoundGraphValue constr [])) | (constr, _) <- alts] ++
+                  [("T" ++ typeName, const $ return $ TypeGraphValue $ ConstTExpr typeName)]
+  interpretExpr (insertAll defValues m) (Map.insert typeName defn adts) bodya
+
+-- TODO
+interpretExpr m adts (ErrorExpr err) = do
+  true <- constTrue
+  return (CompoundGraphValue [(true, "Unit", [])])
+
+interpretExpr m adts (CaseExpr valueExpr cases) = do
+  value <- interpretExpr m adts valueExpr
+  let matchAny [] = interpretExpr m adts (ErrorExpr "all alternatives failed!")
+      matchAny ((p, b):rest) = do
+        let (matched, varvals) = interpretPattern p value
+        matchedBranch <- interpretExpr (insertAll varvals m) adts b
+        nonMatchedBranch <- matchAny rest
+        ifThenElse matched matchedBranch nonMatchedBranch
+  matchAny cases
+
 
 interpretExpr _ _ other = error $ "Cannot interpret expr " ++ show other
 
@@ -202,9 +235,10 @@ notVar x = do
   newFactor notFactor [y, x]
   return y
 
+-- TODO: this might be wrong due to multiple trues
 ifThenElse pvar (CompoundGraphValue left) (CompoundGraphValue right) =
   let oneSideOnly flipper ((lv, lc, lf):lrest) rrest = do
-        rv <- constValue boolValueExpFam (BoolValue False)
+        rv <- constFalse
         VarGraphValue v' <- flipper (ifThenElse pvar) (VarGraphValue lv) (VarGraphValue rv)
         rest <- flipper (ifThenElse pvar) (CompoundGraphValue lrest) rrest
         return $ CompoundGraphValue ((v', lc, lf):rest)
@@ -242,7 +276,7 @@ unifyGraphValues :: GraphValue -> GraphValue -> GraphBuilder Value GraphValue
 unifyGraphValues (VarGraphValue a) (VarGraphValue b) = liftM VarGraphValue $ conditionEqual a b
 unifyGraphValues (CompoundGraphValue left) (CompoundGraphValue right) =
   let oneSideOnly ((lv, lc, lf):lrest) rrest = do
-        rv <- constValue boolValueExpFam (BoolValue False)
+        rv <- constFalse
         conditionEqual lv rv
         unifyGraphValues (CompoundGraphValue lrest) (CompoundGraphValue rrest)
       leftOnly = oneSideOnly left right
@@ -256,128 +290,94 @@ unifyGraphValues (CompoundGraphValue left) (CompoundGraphValue right) =
       GT -> rightOnly
       EQ -> do
         v' <- conditionEqual lv rv
+        -- TODO: this seems a little wrong
         fs' <- zipWithM conditionEqual lf rf
         rest' <- unifyGraphValues (CompoundGraphValue lrest) (CompoundGraphValue rrest)
         return $ CompoundGraphValue ((v', lc, fs') : rest')
 unifyGraphValues v1 v2 = error ("Cannot unify values " ++ show v1 ++ " and " ++ show v2)
 
+expandAdt :: AdtDefinition -> [TypeExpr] -> [(String, [TypeExpr])]
+expandAdt (_, paramNames, alts) params =
+  [(constr, map (reduceTypeDeepIn (Map.fromList (zipSameLength paramNames params))) fs |
+   (constr, fs) <- alts]
 
-typeToExpFams :: Map String NewTypeDefinition -> TypeExpr -> [ExpFam Value]
-typeToExpFams _ (ConstTExpr "_Unit") = []
-typeToExpFams _ t@(ConstTExpr _) = [expFamForType t]
-typeToExpFams nts (AppTExpr (AppTExpr (ConstTExpr "_Pair") a) b) =
-  typeToExpFams nts a ++ typeToExpFams nts b
-typeToExpFams nts (AppTExpr (AppTExpr (ConstTExpr "_Either") a) b) =
-  [boolValueExpFam] ++ typeToExpFams nts a ++ typeToExpFams nts b
-typeToExpFams nts (splitAppType -> (ConstTExpr newTypeName, params)) =
-  case Map.lookup newTypeName nts of
-    Nothing -> error ("Unknown type " ++ newTypeName)
-    Just ntd -> typeToExpFams nts (expandNewType ntd params)
+expandAdtInEnv :: Map String AdtDefinition -> TypeExpr -> Maybe [(String, [TypeExpr])]
+expandAdtInEnv adts (splitAppType -> (ConstTExpr adtTypeName, params)) =
+  case Map.lookup adtTypeName adts of
+    Nothing -> Nothing
+    Just defn -> expandAdt defn params
+expandAdtInEnv _ _ = Nothing
+
+
+
+typeToExpFams :: Map String AdtDefinition -> TypeExpr -> [ExpFam Value]
+typeToExpFams adts (expandAdtInEnv adts -> Just alts) =
+  replicate (max 0 (length alts - 1)) boolValueExpFam ++ (alts >>= (typeToExpFams adts . snd))
 typeToExpFams _ other = error ("Cannot get exponential family for type: " ++ show other)
 
-graphValueEmbeddedVars :: GraphValue -> [VarId]
-graphValueEmbeddedVars UnitGraphValue = []
-graphValueEmbeddedVars (VarGraphValue v) = [v]
-graphValueEmbeddedVars (PairGraphValue a b) =
-  graphValueEmbeddedVars a ++ graphValueEmbeddedVars b
-graphValueEmbeddedVars (EitherGraphValue c a b) =
-  [c] ++ graphValueEmbeddedVars a ++ graphValueEmbeddedVars b
-graphValueEmbeddedVars (PureLeftGraphValue a) = graphValueEmbeddedVars a
-graphValueEmbeddedVars (PureRightGraphValue a) = graphValueEmbeddedVars a
--- graphValueEmbeddedVars (MuGraphValue _ a) = graphValueEmbeddedVars a
+graphValueEmbeddedVars :: Map String AdtDefinition -> TypeExpr -> GraphValue -> [VarId]
+graphValueEmbeddedVars _ _ (VarGraphValue v) = [v]
+graphValueEmbeddedVars adts (expandAdtInEnv adts -> Just alts) (CompoundGraphValue constrs) =
+  init (map fst3 alts) ++ do
+    -- TODO: handle subset
+    ((constrName, fieldTypes), (_, constrName', fs)) <- zipSameLength alts constrs
+    if constrName == constrName' then return () else undefined
+    f <- fs
+    graphValueEmbeddedVars f
 graphValueEmbeddedVars (LambdaGraphValue _) =
   error "Cannot get embedded variables in LambdaGraphValue"
 
-varsToGraphValue' :: Map String NewTypeDefinition -> TypeExpr -> State [VarId] GraphValue
-varsToGraphValue' _ (ConstTExpr "_Unit") = return UnitGraphValue
+popState :: State [a] a
+popState = do
+  (x:xs) <- get
+  put xs
+  return x
+
+varsToGraphValue' :: Map String AdtDefinition -> TypeExpr -> State [VarId] GraphValue
 varsToGraphValue' _ (ConstTExpr x) | elem x ["Bool", "Double"] = do
   (v:vs) <- get
   put vs
   return $ VarGraphValue v
-varsToGraphValue' nts (AppTExpr (AppTExpr (ConstTExpr "_Pair") a) b) =
-  PairGraphValue <$> varsToGraphValue' nts a <*> varsToGraphValue' nts b
-varsToGraphValue' nts (AppTExpr (AppTExpr (ConstTExpr "_Either") a) b) = do
-  (v:vs) <- get
-  put vs
-  EitherGraphValue v <$> varsToGraphValue' nts a <*> varsToGraphValue' nts b
-varsToGraphValue' nts (splitAppType -> (ConstTExpr newTypeName, params)) =
-  case Map.lookup newTypeName nts of
-    Nothing -> error ("Unknown type " ++ newTypeName)
-    Just ntd -> varsToGraphValue' nts (expandNewType ntd params)
-
-
+varsToGraphValue' adts (expandAdtInEnv adts -> Just alts) = do
+  boolVars <- replicateM (length alts - 1) popState
+  lastBoolVar <- constTrue
+  let allBoolVars = boolVars ++ [lastBoolVar]
+  CompoundGraphValue <$> forM (zip alts allBoolVars) $ \((constrName, fieldTypes), boolVar) -> do
+    fieldValues <- mapM (varsToGraphValue' adts) fieldTypes
+    return (boolVar, constrName, fieldValues)
 varsToGraphValue' _ other =
   error ("Cannot get graph value for type: " ++ show other)
 
-varsToGraphValue :: Map String NewTypeDefinition -> TypeExpr -> [VarId] -> GraphValue
-varsToGraphValue nts t vars = case runState (varsToGraphValue' nts t) vars of
+varsToGraphValue :: Map String AdtDefinition -> TypeExpr -> [VarId] -> GraphValue
+varsToGraphValue adts t vars = case runState (varsToGraphValue' adts t) vars of
   (result, []) -> result
   other -> error $ "Too many variables (" ++ show (length vars) ++ ") for type " ++ show t
 
-fmapNewtype :: TypeExpr -> String -> (GraphValue -> GraphBuilder Value GraphValue) -> GraphValue -> GraphBuilder Value GraphValue
-fmapNewtype (VarTExpr var) v f val | var == v = f val
-                                   | otherwise = return val
-fmapNewtype (ConstTExpr _) _ _ val = return val
-fmapNewtype (AppTExpr (AppTExpr (ConstTExpr "_Pair") atype) btype) v f (PairGraphValue a b) =
-  PairGraphValue <$> fmapNewtype atype v f a <*> fmapNewtype btype v f b
-fmapNewtype (AppTExpr (AppTExpr (ConstTExpr "_Either") ltype) rtype) v f (EitherGraphValue c l r) =
-  EitherGraphValue c <$> fmapNewtype ltype v f l <*> fmapNewtype rtype v f r
-fmapNewtype (AppTExpr (AppTExpr (ConstTExpr "_Either") ltype) rtype) v f (PureLeftGraphValue l) =
-  PureLeftGraphValue <$> fmapNewtype ltype v f l
-fmapNewtype (AppTExpr (AppTExpr (ConstTExpr "_Either") ltype) rtype) v f (PureRightGraphValue r) =
-  PureRightGraphValue <$> fmapNewtype rtype v f r
-fmapNewtype (AppTExpr (AppTExpr (ConstTExpr "->") argtype) rettype) v f (LambdaGraphValue lam) =
-  -- TODO: v should not appear in argtype
-  return $ LambdaGraphValue $ \arg -> lam arg >>= fmapNewtype rettype v f
+-- fmapNewtype :: TypeExpr -> String -> (GraphValue -> GraphBuilder Value GraphValue) -> GraphValue -> GraphBuilder Value GraphValue
+-- fmapNewtype (VarTExpr var) v f val | var == v = f val
+--                                    | otherwise = return val
+-- fmapNewtype (ConstTExpr _) _ _ val = return val
+-- fmapNewtype (AppTExpr (AppTExpr (ConstTExpr "_Pair") atype) btype) v f (PairGraphValue a b) =
+--   PairGraphValue <$> fmapNewtype atype v f a <*> fmapNewtype btype v f b
+-- fmapNewtype (AppTExpr (AppTExpr (ConstTExpr "_Either") ltype) rtype) v f (EitherGraphValue c l r) =
+--   EitherGraphValue c <$> fmapNewtype ltype v f l <*> fmapNewtype rtype v f r
+-- fmapNewtype (AppTExpr (AppTExpr (ConstTExpr "_Either") ltype) rtype) v f (PureLeftGraphValue l) =
+--   PureLeftGraphValue <$> fmapNewtype ltype v f l
+-- fmapNewtype (AppTExpr (AppTExpr (ConstTExpr "_Either") ltype) rtype) v f (PureRightGraphValue r) =
+--   PureRightGraphValue <$> fmapNewtype rtype v f r
+-- fmapNewtype (AppTExpr (AppTExpr (ConstTExpr "->") argtype) rettype) v f (LambdaGraphValue lam) =
+--   -- TODO: v should not appear in argtype
+--   return $ LambdaGraphValue $ \arg -> lam arg >>= fmapNewtype rettype v f
 
 const2 = const . const
 
-defaultContext :: Map String (Map String NewTypeDefinition -> GraphBuilder Value GraphValue)
+defaultContext :: Map String (Map String AdtDefinition -> GraphBuilder Value GraphValue)
 defaultContext = Map.fromList [
   -- unify :: a -> a -> a
   -- conditions on its arguments being equal, returning one of them
   ("unify",
    const $ return $ LambdaGraphValue $ \v1 ->
      return $ LambdaGraphValue $ \v2 -> unifyGraphValues v1 v2),
-  ("_unit", const $ return UnitGraphValue),
-  ("_fst",
-   const $ return $ LambdaGraphValue $ \(PairGraphValue first _) -> return first),
-  ("_snd",
-   const $ return $ LambdaGraphValue $ \(PairGraphValue _ second) -> return second),
-  ("_pair",
-   const $ return $ LambdaGraphValue $ \first -> return $ LambdaGraphValue $
-     \second -> return $ PairGraphValue first second),
-  ("_left",
-   const $ return $ LambdaGraphValue $ \value -> return $ PureLeftGraphValue value),
-  ("_right",
-   const $ return $ LambdaGraphValue $ \value -> return $ PureRightGraphValue value),
-  ("_either",
-   let getResult (PureLeftGraphValue leftVal) leftHandler rightHandler = leftHandler leftVal
-       getResult (PureRightGraphValue rightVal) leftHandler rightHandler = rightHandler rightVal
-       getResult (EitherGraphValue isRightVar leftVal rightVal) leftHandler rightHandler = do
-         leftResult <- leftHandler leftVal
-         rightResult <- rightHandler rightVal
-         ifThenElse isRightVar leftResult rightResult
-       getResult other _ _ = error $ "Not an either: " ++ show other
-   in const $ return $ LambdaGraphValue $ \eitherValue ->
-     return $ LambdaGraphValue $ \(LambdaGraphValue leftHandler) ->
-       return $ LambdaGraphValue $ \(LambdaGraphValue rightHandler) ->
-         getResult eitherValue leftHandler rightHandler
-  ),
-  -- TODO: fix these values to return MuGraphValues
-  ("mu",
-  -- TODO: let you apply typegraphvalues!
-  \nts -> return $ LambdaGraphValue $ \functorTypeValue -> case functorTypeValue of
-    TypeGraphValue functorType ->
-      case splitAppType functorType of
-        (ConstTExpr functorName, _) -> case Map.lookup functorName nts of
-          Nothing -> error ("No newtype " ++ functorName)
-          Just def -> return $ LambdaGraphValue (return . MuGraphValue def)
-        _ -> error $ "Not a valid functor: " ++ show functorType
-    _ -> error $ "Mu argument is not a type: " ++ show functorTypeValue
-  ),
-  ("unMu",
-   const $ return $ LambdaGraphValue $ \(MuGraphValue _ v) -> return v
   ),
   -- -- cata :: Functor f => (f a -> a) -> Mu f -> a
   -- -- cata f = f . fmap (cata f) . unMu
@@ -405,17 +405,17 @@ defaultContext = Map.fromList [
   -- TODO: somehow this has to be lazy.  See what it's called with, then
   -- make a different function for each?  Or just take arg type as an argument.
   ("randFunction",
-   \nts ->
+   \adts ->
      return $ LambdaGraphValue $ \argTypeValue -> case argTypeValue of
        TypeGraphValue argType -> return $ LambdaGraphValue $ \resTypeValue -> case resTypeValue of
          TypeGraphValue resType -> do
-           let argExpFams = typeToExpFams nts argType
-               resExpFams = typeToExpFams nts resType
+           let argExpFams = typeToExpFams adts argType
+               resExpFams = typeToExpFams adts resType
            rfs <- mapM (flip newRandFun argExpFams) resExpFams
            return $ LambdaGraphValue $ \argValue -> do
-             let argVars = graphValueEmbeddedVars argValue
+             let argVars = graphValueEmbeddedVars argType argValue
              resVars <- mapM (flip newSampleFromRandFun argVars) rfs
-             return $ varsToGraphValue nts resType resVars
+             return $ varsToGraphValue adts resType resVars
          other -> error $ "randFunction called with non-type second argument " ++ show other
        other -> error $ "randFunction called with non-type first argument " ++ show other
   )
