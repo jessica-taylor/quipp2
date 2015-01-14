@@ -1,0 +1,28 @@
+
+
+data Nonterminal = N | V | NP | VP | Clause;
+
+data Terminal = Cat | Dog | Jump | Run | That;
+
+data Symbol = SN Nonterminal | ST Terminal;
+
+expandNonterminal nt = case nt {
+  N -> [[ST Cat, ST Dog]];
+  V -> [[ST Jump, ST run]];
+  NP -> [[SN N], [SN NP, ST That, SN VP]];
+  VP -> [[SN V], [SN V, SN NP]];
+};
+
+toSentence sym rest = case sym {
+  ST t -> Cons t rest;
+  SN n ->
+    let alts = expandNonterminal n;
+    alts !! randfun alts
+};
+flatten_n_kind Cat rest = Cons WCat rest;
+...
+
+flatten_v_kind ...
+
+flatten_np_kind NP_N
+
