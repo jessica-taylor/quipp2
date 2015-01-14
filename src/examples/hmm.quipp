@@ -1,5 +1,5 @@
-let stateType = categorical 5N;
-let obsType = categorical 7N;
+let stateType = tcategorical 5N;
+let obsType = tcategorical 7N;
 let transFun = randFunction stateType stateType;
 let obsFun = randFunction stateType obsType;
 \un ->

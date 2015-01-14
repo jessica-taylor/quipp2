@@ -18,8 +18,9 @@ import Quipp.Vmp
 samplerToSamples :: Int -> GraphBuilder Value GraphValue -> GraphBuilder Value [(GraphValue, GraphValue)]
 samplerToSamples n model = do
   LambdaGraphValue sampler <- model
-  sampGraphValues <- replicateM n (sampler UnitGraphValue)
-  return [(x, y) | PairGraphValue x y <- sampGraphValues]
+  unit <- unitGraphValue
+  sampGraphValues <- replicateM n (sampler unit)
+  return [(x, y) | CompoundGraphValue [(_, "Pair", [x, y])] <- sampGraphValues]
 
 takeSamples :: Int -> GraphBuilder Value GraphValue -> FactorGraphParams -> RVar [(FrozenGraphValue, FrozenGraphValue)]
 takeSamples n model params = do

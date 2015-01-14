@@ -1,0 +1,14 @@
+
+let nfeatures = 10N;
+
+let featuresType = ttuple nfeatures TBool;
+
+let getClassFun = randFunction TUnit TBool;
+
+let class1Features = randFunction TUnit featuresType;
+let class2Features = randFunction TUnit featuresType;
+
+\un ->
+let whichClass = getClassFun ();
+(whichClass, if whichClass (class1Features ()) (class2Features ()))
+

@@ -1,0 +1,16 @@
+
+let inputDim = 100N;
+let hiddenDim = 20N;
+let outputDim = 2N;
+let inputType = tcategorical inputDim;
+let hiddenType = tcategorical hiddenDim;
+let outputType = tcategorical outputDim;
+
+let hiddenFun = randFunction inputType hiddenType
+let outputFun = randFunction hiddenType outputType;
+
+\input ->
+let hidden = hiddenFun input;
+let output = outputFun hidden;
+(hidden, output)
+

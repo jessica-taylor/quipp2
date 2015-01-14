@@ -4,10 +4,11 @@ module Quipp.TypeInference where
 
 import Debug.Trace
 import Data.Function (fix)
+import Data.List (elemIndex)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Control.Applicative ((<$>), (<*>))
-import Control.Monad (liftM, zipWithM, forM)
+import Control.Monad (liftM, zipWithM, forM, replicateM)
 import Control.Monad.Reader (ReaderT, runReaderT)
 import Control.Monad.Reader.Class (ask, local)
 import Control.Monad.State (get, put)
@@ -56,6 +57,9 @@ instance Show Expr where
   showsPrec p (ErrorExpr err) = showString (show ("err", err))
   showsPrec p (TypeLiteralExpr t) = showsPrec p t
 
+constTrue = constValue boolValueExpFam (BoolValue True)
+constFalse = constValue boolValueExpFam (BoolValue False)
+
 type TypeId = Int
 
 functionType a b = AppTExpr (AppTExpr (ConstTExpr "->") a) b
@@ -101,7 +105,7 @@ data GraphValue = VarGraphValue VarId | LambdaGraphValue (GraphValue -> GraphBui
 
 data FrozenGraphValue = FValueGraphValue Value | FCompoundGraphValue String [FrozenGraphValue] | FTypeGraphValue TypeExpr deriving (Eq, Ord)
 
-showCompound :: Show f => (VarId, String, [f]) -> String
+showCompound :: Show f => String -> [f] -> String
 showCompound c fs = c ++ concatMap ((' ':) . show) fs
 
 instance Show GraphValue where
@@ -109,7 +113,7 @@ instance Show GraphValue where
   show (LambdaGraphValue _) = "#lambda"
   show (CompoundGraphValue []) = "<undefined>"
   show (CompoundGraphValue [(v, c, fs)]) = "(" ++ showCompound c fs ++ ")"
-  show (CompoundGraphValue ((v, c, fs):rest) =
+  show (CompoundGraphValue ((v, c, fs):rest)) =
     "(if $" ++ show v ++ " then " ++ showCompound c fs ++ " else " ++ show (CompoundGraphValue rest) ++ ")"
   show (TypeGraphValue t) = "#" ++ show t
 
@@ -119,7 +123,6 @@ instance Show FrozenGraphValue where
   show (FTypeGraphValue t) = "#" ++ show t
 
 freezeGraphValue :: (VarId -> Value) -> GraphValue -> FrozenGraphValue
-freezeGraphValue _ UnitGraphValue = FUnitGraphValue
 freezeGraphValue f (VarGraphValue v) = FValueGraphValue $ f v
 freezeGraphValue _ (TypeGraphValue t) = FTypeGraphValue t
 freezeGraphValue f (CompoundGraphValue []) = undefined
@@ -152,24 +155,34 @@ andVariables [] = constTrue
 andVariables (x:xs) = do
   true <- constTrue
   rest <- andVariables xs
-  ifThenElse x (VarGraphValue true) (VarGraphValue rest)
+  VarGraphValue res <- ifThenElse x (VarGraphValue true) (VarGraphValue rest)
+  return res
 
-interpretPattern :: PatternExpr -> GraphValue -> GraphBuilder Value (VarId, [(String, GraphValue)])
+
+interpretPattern :: PatternExpr -> GraphValue -> GraphBuilder Value (Maybe (VarId, [(String, GraphValue)]))
 interpretPattern (VarPExpr var) value = do
   true <- constTrue
-  return (true, [(var, value)])
--- TODO: arity
+  return $ Just (true, [(var, value)])
 interpretPattern (ConstrPExpr constr fields) (CompoundGraphValue alts) = case elemIndex constr (map snd3 alts) of
   Nothing -> do
     false <- constFalse
-    return (false, [])
+    return Nothing
   Just index -> do
     let (_, _, fs) = alts !! index
     fieldMatches <- zipWithM interpretPattern fields fs
-    andVar <- andVariables (take (index + 1) (map fst3 alts) ++ map fst fieldMatches)
-    return (andVar, concat (map snd fieldMatches))
+    case sequence fieldMatches of
+      Nothing -> return Nothing
+      Just fieldMatches' -> do
+        andVar <- andVariables (take (index + 1) (map fst3 alts) ++ map fst fieldMatches')
+        return $ Just (andVar, concat (map snd fieldMatches'))
 
+unitGraphValue = do
+  true <- constTrue
+  return $ CompoundGraphValue [(true, "Unit", [])]
 
+pairGraphValue v1 v2 = do
+  true <- constTrue
+  return $ CompoundGraphValue [(true, "Pair", [v1, v2])]
 
 interpretExpr :: Map String (Map String AdtDefinition -> GraphBuilder Value GraphValue) -> Map String AdtDefinition -> Expr -> GraphBuilder Value GraphValue
 
@@ -187,7 +200,7 @@ interpretExpr m adts (AppExpr fun arg) = do
   argVal <- interpretExpr m adts arg
   case funVal of
     LambdaGraphValue f -> f argVal
-    CompoundGraphValue alts = CompoundGraphValue [(v, c, fs ++ [argVal]) | (v, c, fs) <- alts]
+    CompoundGraphValue alts -> return $ CompoundGraphValue [(v, c, fs ++ [argVal]) | (v, c, fs) <- alts]
     TypeGraphValue ft -> do
       case argVal of
         TypeGraphValue at -> return $ TypeGraphValue (AppTExpr ft at)
@@ -209,21 +222,23 @@ interpretExpr m adts (AdtDefExpr defn@(typeName, typeArgs, alts) body) = do
   let wrappedType = foldl AppTExpr (ConstTExpr typeName) (map VarTExpr typeArgs)
   let defValues = [(constr, const $ unfreezeGraphValue (FCompoundGraphValue constr [])) | (constr, _) <- alts] ++
                   [("T" ++ typeName, const $ return $ TypeGraphValue $ ConstTExpr typeName)]
-  interpretExpr (insertAll defValues m) (Map.insert typeName defn adts) bodya
+  interpretExpr (insertAll defValues m) (Map.insert typeName defn adts) body
 
 -- TODO
-interpretExpr m adts (ErrorExpr err) = do
-  true <- constTrue
-  return (CompoundGraphValue [(true, "Unit", [])])
+interpretExpr m adts (ErrorExpr err) = unitGraphValue
 
 interpretExpr m adts (CaseExpr valueExpr cases) = do
   value <- interpretExpr m adts valueExpr
   let matchAny [] = interpretExpr m adts (ErrorExpr "all alternatives failed!")
       matchAny ((p, b):rest) = do
-        let (matched, varvals) = interpretPattern p value
-        matchedBranch <- interpretExpr (insertAll varvals m) adts b
         nonMatchedBranch <- matchAny rest
-        ifThenElse matched matchedBranch nonMatchedBranch
+        matchResult <- interpretPattern p value
+        case matchResult of
+          Nothing -> return nonMatchedBranch
+          Just (matched, varvals) -> do
+            let varvals' = [(v, const $ return val) | (v, val) <- varvals]
+            matchedBranch <- interpretExpr (insertAll varvals' m) adts b
+            ifThenElse matched matchedBranch nonMatchedBranch
   matchAny cases
 
 
@@ -240,11 +255,11 @@ ifThenElse pvar (CompoundGraphValue left) (CompoundGraphValue right) =
   let oneSideOnly flipper ((lv, lc, lf):lrest) rrest = do
         rv <- constFalse
         VarGraphValue v' <- flipper (ifThenElse pvar) (VarGraphValue lv) (VarGraphValue rv)
-        rest <- flipper (ifThenElse pvar) (CompoundGraphValue lrest) rrest
+        CompoundGraphValue rest <- flipper (ifThenElse pvar) (CompoundGraphValue lrest) (CompoundGraphValue rrest)
         return $ CompoundGraphValue ((v', lc, lf):rest)
       leftOnly = oneSideOnly id left right
-      rightOnly l r = oneSideOnly flip right left
-  case (left, right) of
+      rightOnly = oneSideOnly flip right left
+  in case (left, right) of
     ([], []) -> return $ CompoundGraphValue []
     (_, []) -> leftOnly
     ([], _) -> rightOnly
@@ -254,7 +269,7 @@ ifThenElse pvar (CompoundGraphValue left) (CompoundGraphValue right) =
       EQ -> do
         VarGraphValue v' <- ifThenElse pvar (VarGraphValue lv) (VarGraphValue rv)
         firstFields <- zipWithM (ifThenElse pvar) lf rf
-        rest <- ifThenElse pvar (CompoundGraphValue lrest) (CompoundGraphValue rrest)
+        CompoundGraphValue rest <- ifThenElse pvar (CompoundGraphValue lrest) (CompoundGraphValue rrest)
         return $ CompoundGraphValue ((v', lc, firstFields) : rest)
 
 
@@ -280,8 +295,8 @@ unifyGraphValues (CompoundGraphValue left) (CompoundGraphValue right) =
         conditionEqual lv rv
         unifyGraphValues (CompoundGraphValue lrest) (CompoundGraphValue rrest)
       leftOnly = oneSideOnly left right
-      rightOnly l r = oneSideOnly right left
-  case (left, right) of
+      rightOnly = oneSideOnly right left
+  in case (left, right) of
     ([], []) -> return $ CompoundGraphValue []
     (_, []) -> leftOnly
     ([], _) -> rightOnly
@@ -291,40 +306,43 @@ unifyGraphValues (CompoundGraphValue left) (CompoundGraphValue right) =
       EQ -> do
         v' <- conditionEqual lv rv
         -- TODO: this seems a little wrong
-        fs' <- zipWithM conditionEqual lf rf
-        rest' <- unifyGraphValues (CompoundGraphValue lrest) (CompoundGraphValue rrest)
+        fs' <- zipWithM unifyGraphValues lf rf
+        CompoundGraphValue rest' <- unifyGraphValues (CompoundGraphValue lrest) (CompoundGraphValue rrest)
         return $ CompoundGraphValue ((v', lc, fs') : rest')
 unifyGraphValues v1 v2 = error ("Cannot unify values " ++ show v1 ++ " and " ++ show v2)
 
 expandAdt :: AdtDefinition -> [TypeExpr] -> [(String, [TypeExpr])]
 expandAdt (_, paramNames, alts) params =
-  [(constr, map (reduceTypeDeepIn (Map.fromList (zipSameLength paramNames params))) fs |
+  [(constr, map (reduceTypeDeepIn (Map.fromList (zipSameLength paramNames params))) fs) |
    (constr, fs) <- alts]
 
 expandAdtInEnv :: Map String AdtDefinition -> TypeExpr -> Maybe [(String, [TypeExpr])]
 expandAdtInEnv adts (splitAppType -> (ConstTExpr adtTypeName, params)) =
   case Map.lookup adtTypeName adts of
     Nothing -> Nothing
-    Just defn -> expandAdt defn params
+    Just defn -> Just (expandAdt defn params)
 expandAdtInEnv _ _ = Nothing
 
 
 
 typeToExpFams :: Map String AdtDefinition -> TypeExpr -> [ExpFam Value]
 typeToExpFams adts (expandAdtInEnv adts -> Just alts) =
-  replicate (max 0 (length alts - 1)) boolValueExpFam ++ (alts >>= (typeToExpFams adts . snd))
+  replicate (length alts) boolValueExpFam ++ do
+    (_, fieldTypes) <- alts
+    fieldTypes >>= typeToExpFams adts
+
 typeToExpFams _ other = error ("Cannot get exponential family for type: " ++ show other)
 
 graphValueEmbeddedVars :: Map String AdtDefinition -> TypeExpr -> GraphValue -> [VarId]
 graphValueEmbeddedVars _ _ (VarGraphValue v) = [v]
 graphValueEmbeddedVars adts (expandAdtInEnv adts -> Just alts) (CompoundGraphValue constrs) =
-  init (map fst3 alts) ++ do
+  map fst3 constrs ++ do
     -- TODO: handle subset
     ((constrName, fieldTypes), (_, constrName', fs)) <- zipSameLength alts constrs
     if constrName == constrName' then return () else undefined
-    f <- fs
-    graphValueEmbeddedVars f
-graphValueEmbeddedVars (LambdaGraphValue _) =
+    (typ, field) <- zipSameLength fieldTypes fs
+    graphValueEmbeddedVars adts typ field
+graphValueEmbeddedVars _ _ (LambdaGraphValue _) =
   error "Cannot get embedded variables in LambdaGraphValue"
 
 popState :: State [a] a
@@ -339,12 +357,11 @@ varsToGraphValue' _ (ConstTExpr x) | elem x ["Bool", "Double"] = do
   put vs
   return $ VarGraphValue v
 varsToGraphValue' adts (expandAdtInEnv adts -> Just alts) = do
-  boolVars <- replicateM (length alts - 1) popState
-  lastBoolVar <- constTrue
-  let allBoolVars = boolVars ++ [lastBoolVar]
-  CompoundGraphValue <$> forM (zip alts allBoolVars) $ \((constrName, fieldTypes), boolVar) -> do
+  boolVars <- replicateM (length alts) popState
+  alts <- forM (zip alts boolVars) $ \((constrName, fieldTypes), boolVar) -> do
     fieldValues <- mapM (varsToGraphValue' adts) fieldTypes
     return (boolVar, constrName, fieldValues)
+  return $ CompoundGraphValue alts
 varsToGraphValue' _ other =
   error ("Cannot get graph value for type: " ++ show other)
 
@@ -378,7 +395,6 @@ defaultContext = Map.fromList [
   ("unify",
    const $ return $ LambdaGraphValue $ \v1 ->
      return $ LambdaGraphValue $ \v2 -> unifyGraphValues v1 v2),
-  ),
   -- -- cata :: Functor f => (f a -> a) -> Mu f -> a
   -- -- cata f = f . fmap (cata f) . unMu
   -- ("cata",
@@ -413,7 +429,7 @@ defaultContext = Map.fromList [
                resExpFams = typeToExpFams adts resType
            rfs <- mapM (flip newRandFun argExpFams) resExpFams
            return $ LambdaGraphValue $ \argValue -> do
-             let argVars = graphValueEmbeddedVars argType argValue
+             let argVars = graphValueEmbeddedVars adts argType argValue
              resVars <- mapM (flip newSampleFromRandFun argVars) rfs
              return $ varsToGraphValue adts resType resVars
          other -> error $ "randFunction called with non-type second argument " ++ show other

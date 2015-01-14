@@ -105,9 +105,6 @@ constValue ef value = do
   newConstFactor v value
   return v
 
-constTrue = constValue boolValueExpFam (BoolValue True)
-constFalse = constValue boolValueExpFam (BoolValue False)
-
 conditionEqual :: VarId -> VarId -> GraphBuilder v VarId
 conditionEqual v1 v2 = do
   s <- get

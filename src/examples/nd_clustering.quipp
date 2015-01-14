@@ -1,8 +1,8 @@
 
 let dim = 10N;
 let nclusters = 3N;
-let pointType = iterate dim (TPair TDouble) TUnit;
-let clusterType = iterate nClusters TMaybe TVoid;
+let pointType = ttuple dim TDouble;
+let clusterType = tcategorical nclusters;
 
 let getPoint = randFunction clusterType pointType;
 \_ ->

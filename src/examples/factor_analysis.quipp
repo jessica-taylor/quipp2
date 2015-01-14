@@ -1,6 +1,8 @@
 let numComponents = 3N;
 let pointDim = 5N;
-let getPoint = randFunction (TTuple numComponents TDouble) (TTuple pointDim TDouble);
+let componentsType = ttuple numComponents TDouble;
+let pointType = ttuple pointDim TDouble;
+let getPoint = randFunction componentsType pointType;
 
 \un ->
 let x = replicate numComponents standardNormal;

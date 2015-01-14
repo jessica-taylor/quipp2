@@ -162,7 +162,7 @@ singleCaseExpr ctx = do
   spacedString "->"
   body <- expr ctx
   spacedString ";"
-  return (toPrimPat (ctx !) pat, body)
+  return (pat, body)
 
 caseExpr ctx = do
   stringWithBreak "case"
@@ -170,7 +170,7 @@ caseExpr ctx = do
   spacedString "{"
   cases <- many (singleCaseExpr ctx)
   spacedString "}"
-  return $ casesToExpr 0 value cases
+  return $ CaseExpr value cases
 
 
 adtCase = do
