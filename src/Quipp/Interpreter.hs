@@ -159,13 +159,12 @@ andVariables (x:xs) = do
   return res
 
 
-interpretPattern :: PatternExpr -> GraphValue -> GraphBuilder Value (Maybe (VarId, [(String, GraphValue)]))
+interpretPattern :: PatternExpr -> GraphValue -> GraphBuilder Value (Maybe ([VarId], [(String, GraphValue)]))
 interpretPattern (VarPExpr var) value = do
   true <- constTrue
-  return $ Just (true, [(var, value)])
+  return $ Just ([], [(var, value)])
 interpretPattern (ConstrPExpr constr fields) (CompoundGraphValue alts) = case elemIndex constr (map snd3 alts) of
   Nothing -> do
-    false <- constFalse
     return Nothing
   Just index -> do
     let (_, _, fs) = alts !! index
@@ -173,8 +172,11 @@ interpretPattern (ConstrPExpr constr fields) (CompoundGraphValue alts) = case el
     case sequence fieldMatches of
       Nothing -> return Nothing
       Just fieldMatches' -> do
-        andVar <- andVariables (take (index + 1) (map fst3 alts) ++ map fst fieldMatches')
-        return $ Just (andVar, concat (map snd fieldMatches'))
+        let matchedVars = take (index + 1) (init $ map fst3 alts) ++ concat (map fst fieldMatches')
+        -- TODO: figure out when andVar is always true
+        return $ Just (matchedVars, concat (map snd fieldMatches'))
+interpretPattern pat@(ConstrPExpr _ _) otherValue =
+  error ("Cannot match pattern " ++ show pat ++ " with value " ++ show otherValue)
 
 unitGraphValue = do
   true <- constTrue
@@ -190,7 +192,9 @@ interpretExpr _ _ x | trace ("\ninterpret " ++ show x) False = undefined
 
 interpretExpr m adts (VarExpr var) = case Map.lookup var m of
   Nothing -> error ("cannot find variable " ++ var)
-  Just val -> val adts
+  Just val -> do
+    res <- val adts
+    trace ("got variable " ++ show var ++ ", " ++ show res) $ return res
 
 interpretExpr m adts (LambdaExpr param body) = return $ LambdaGraphValue $
   \arg -> interpretExpr (Map.insert param (const $ return arg) m) adts body
@@ -198,7 +202,7 @@ interpretExpr m adts (LambdaExpr param body) = return $ LambdaGraphValue $
 interpretExpr m adts (AppExpr fun arg) = do
   funVal <- interpretExpr m adts fun
   argVal <- interpretExpr m adts arg
-  case funVal of
+  res <- case funVal of
     LambdaGraphValue f -> f argVal
     CompoundGraphValue alts -> return $ CompoundGraphValue [(v, c, fs ++ [argVal]) | (v, c, fs) <- alts]
     TypeGraphValue ft -> do
@@ -206,6 +210,7 @@ interpretExpr m adts (AppExpr fun arg) = do
         TypeGraphValue at -> return $ TypeGraphValue (AppTExpr ft at)
         _ -> error $ "Cannot apply type to non-type " ++ show argVal
     _ -> error $ "Function in application expression is not actually a function: " ++ show funVal
+  trace ("Apply " ++ show fun ++ " to " ++ show arg ++ " yielding " ++ show res) $ return res
 
 interpretExpr m adts (DefExpr varvals body) = do
   let newM = insertAll [(var, \_ -> interpretExpr newM adts val) | (var, val) <- varvals] m
@@ -233,12 +238,21 @@ interpretExpr m adts (CaseExpr valueExpr cases) = do
       matchAny ((p, b):rest) = do
         nonMatchedBranch <- matchAny rest
         matchResult <- interpretPattern p value
+        -- TODO: catch cases where we definitely matched or definitely didn't match
         case matchResult of
           Nothing -> return nonMatchedBranch
-          Just (matched, varvals) -> do
+          Just ([], varvals) -> do
             let varvals' = [(v, const $ return val) | (v, val) <- varvals]
             matchedBranch <- interpretExpr (insertAll varvals' m) adts b
-            ifThenElse matched matchedBranch nonMatchedBranch
+            return matchedBranch
+          Just (matchedVars, varvals) -> do
+            matched <- andVariables matchedVars
+            let varvals' = [(v, const $ return val) | (v, val) <- varvals]
+            matchedBranch <- interpretExpr (insertAll varvals' m) adts b
+            trace ("blahblah!!!!!!!!!!" ++ show (rest, matchedBranch, nonMatchedBranch)) (
+              if rest == []
+              then return matchedBranch -- TODO?
+              else ifThenElse matched matchedBranch nonMatchedBranch)
   matchAny cases
 
 
@@ -318,9 +332,7 @@ expandAdt (_, paramNames, alts) params =
 
 expandAdtInEnv :: Map String AdtDefinition -> TypeExpr -> Maybe [(String, [TypeExpr])]
 expandAdtInEnv adts (splitAppType -> (ConstTExpr adtTypeName, params)) =
-  case Map.lookup adtTypeName adts of
-    Nothing -> Nothing
-    Just defn -> Just (expandAdt defn params)
+  fmap (\defn -> expandAdt defn params) (Map.lookup adtTypeName adts)
 expandAdtInEnv _ _ = Nothing
 
 
@@ -343,7 +355,7 @@ graphValueEmbeddedVars adts (expandAdtInEnv adts -> Just alts) (CompoundGraphVal
     (typ, field) <- zipSameLength fieldTypes fs
     graphValueEmbeddedVars adts typ field
 graphValueEmbeddedVars _ _ (LambdaGraphValue _) =
-  error "Cannot get embedded variables in LambdaGraphValue"
+  error "nnot get embedded variables in LambdaGraphValue"
 
 popState :: State [a] a
 popState = do

@@ -1,11 +1,11 @@
 
-let dim = 10N;
+let dim = 2N;
 let nclusters = 3N;
 let pointType = ttuple dim TDouble;
 let clusterType = tcategorical nclusters;
 
 let getPoint = randFunction clusterType pointType;
 \_ ->
-let cluster = uniform clusterType;
+let cluster = uniform dim;
 (cluster, getPoint getCluster)
 

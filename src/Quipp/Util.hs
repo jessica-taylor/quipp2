@@ -9,7 +9,7 @@ import Data.Function (on)
 import Data.List (groupBy, sortBy)
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Random (RandomSource, RVarT, RVar, StdRandom(StdRandom), runRVar, runRVarT, runRVarTWith, stdUniform)
+import Data.Random (MonadRandom, RandomSource, RVarT, RVar, StdRandom(StdRandom), sampleState, runRVar, runRVarT, runRVarTWith, stdUniform)
 import qualified Data.Packed.Matrix as Mat
 import Numeric.LinearAlgebra.Algorithms (linearSolve, pinv)
 import Numeric.AD (diff, Mode, Scalar)
@@ -31,7 +31,9 @@ takeEvery :: Int -> [a] -> [a]
 takeEvery _ [] = []
 takeEvery n (x:xs) = x : takeEvery n (drop (n-1) xs)
 
+sampleRVar :: MonadRandom m => RVar a -> m a
 sampleRVar v = runRVar v StdRandom
+
 sampleRVarT v = runRVarT v StdRandom
 
 sampleRVarTWith :: RandomSource m StdRandom => (forall t. n t -> m t) -> RVarT n a -> m a
@@ -63,7 +65,7 @@ stateInfList f s =
 iterateRVar :: (a -> RVar a) -> a -> RVar [a]
 iterateRVar f x = do
   seed <- stdUniform
-  return $ stateInfList (\(y, gen) -> let (y', gen') = runState (sampleRVar (f y)) gen in (y', (y', gen'))) (x, mkStdGen seed)
+  return $ stateInfList (\(y, gen) -> let (y', gen') = sampleState (f y) gen in (y', (y', gen'))) (x, mkStdGen seed)
 
 groupAnywhereBy :: Ord b => (a -> b) -> [a] -> [[a]]
 groupAnywhereBy f = groupBy ((==) `on` f) . sortBy (compare `on` f)

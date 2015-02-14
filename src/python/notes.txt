@@ -1,0 +1,52 @@
+
+Notes:
+
+
+Approach:
+
+We write the code in Python.  At the end, Python defines a function, sample.
+
+There will be some Python scaffolding that will call sample() and construct a graph.  It will return a description of the FactorGraph,
+along with a function that will convert the assignment of variables to values, to a JSON value.
+
+Examples:
+
+nd clustering:
+
+dim = 10;
+nclusters = 3;
+pointType = Tuple(dim, Double);
+clusterType = Categorical(nclusters);
+getPoint = randFunction(clusterType, pointType);
+
+function sample() {
+  cluster = uniform(clusterType);
+  return (cluster, getPoint(cluster));
+}
+
+This wouldn't be too difficult to get, but some things about it might be confusing (like the lack of distinction between values and types).  It's a bit weird because it's combining dynamic typing with generics.  I'm open to suggestions for how to make this easier to understand.
+
+Hidden Markov model:
+
+stateType = Categorical(5);
+obsType = Categorical(7);
+transFun = randFunction(stateType, stateType);
+obsFun = randFunction(stateType, obsType);
+
+function sample() {
+  states = [uniform(stateType)];
+  for(i in range(10)) {
+    states = append(states, transFun(states[len(states) - 1]);
+  }
+  observations = [];
+  for (s in states) {
+    observations = append(observations, obsFun(s));
+  }
+  return (states, observations)
+}
+
+
+dim = 10
+nclusters = 2
+pointType = tvector(dim, tdouble)
+clusterType = tcategorical(nclusters)

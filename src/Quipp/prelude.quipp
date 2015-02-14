@@ -16,4 +16,10 @@ def snd pair = case pair { Pair x y -> y; };
 def if cond then else = case cond { True -> then; False -> else; };
 
 def ttuple n t = iterate n (TPair t) TUnit;
-def tcategorical n = iterate n Maybe Void;
+def tcategorical n = iterate n TMaybe TVoid;
+
+def uniform n = case n {
+  Z -> Nothing;
+  S m -> if (uniformBool ()) Nothing (Just (uniform m));
+};
+

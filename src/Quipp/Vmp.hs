@@ -2,7 +2,8 @@ module Quipp.Vmp where
 
 import Debug.Trace
 import Control.Applicative ((<$>), (<*>))
-import Control.Monad.Trans (lift)
+import Control.Monad.Trans.Class (lift)
+-- import transformers-0.3.0.0:Control.Monad.Trans.Class (lift)
 import Data.Foldable (foldlM)
 import Data.List (elemIndex)
 import Data.Map (Map, (!))

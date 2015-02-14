@@ -85,7 +85,7 @@ typeExpr = functionTypeExpr
 literalDouble = withBreak $ (LiteralExpr . DoubleValue . read) <$> ((string "-" <|> string "") >>++ many (satisfy isDigit) >>++ string "." >>++ many (satisfy isDigit))
 
 literalNat = withBreak $ do
-  digits <- many (satisfy isDigit)
+  digits <- many1 (satisfy isDigit)
   string "N"
   return $ iterate (AppExpr (VarExpr "S")) (VarExpr "Z") !! (read digits :: Int)
 

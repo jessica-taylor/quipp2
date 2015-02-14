@@ -20,7 +20,7 @@ import Quipp.Util
 import Quipp.Value
 import Quipp.GraphBuilder
 import Quipp.Parser
-import Quipp.TypeInference
+import Quipp.Interpreter
 import Quipp.ParamInference
 
 fPairGraphValue x y = FCompoundGraphValue "Pair" [x, y]
