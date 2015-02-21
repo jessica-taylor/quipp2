@@ -1,0 +1,118 @@
+\documentclass[proceed]{article}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{multicol} \usepackage{fancyheadings} \usepackage{pdfpages}
+\setlength{\emergencystretch}{10em}
+
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{corollary}[theorem]{Corollary}
+ 
+\newenvironment{proof}[1][Proof]{\begin{trivlist}
+\item[\hskip \labelsep {\bfseries #1}]}{\end{trivlist}}
+\newenvironment{definition}[1][Definition]{\begin{trivlist}
+\item[\hskip \labelsep {\bfseries #1}]}{\end{trivlist}}
+\newenvironment{example}[1][Example]{\begin{trivlist}
+\item[\hskip \labelsep {\bfseries #1}]}{\end{trivlist}}
+\newenvironment{remark}[1][Remark]{\begin{trivlist}
+\item[\hskip \labelsep {\bfseries #1}]}{\end{trivlist}}
+
+\DeclareMathOperator*{\Exp}{\mathbb{E}}
+\DeclareMathOperator*{\Prob}{\mathbf{P}}
+
+
+\title{Qualitative Probabilistic Programming}
+\author {}
+\begin{document}
+
+  \maketitle
+
+  \begin{abstract}
+    Probabilistic programs with unknown functions
+  \end{abstract}
+
+  \section{Introduction}
+
+  Probabilistic programming languages have made it easier to specify Bayesian
+  models as programs.  Once a probabilistic model is written as a probabilistic
+  program, it is possible to use generic inference algorithms (such as
+  Metropolis Hastings) to perform inference.
+    - Church example
+
+  In this paper, we discuss a feature of probabilistic programming languages
+  that makes it easy to specify models containing unknown functions.
+  Specifically, we allow programs to specify that some random functions
+  are unknown.  The system will fill in these unknown functions with
+  some reasonable default class of distributions based on the types and
+  proceed to infer the parameters to this distribution using the
+  expectation maximization algorithm.
+
+  This feature has multiple advantages.  First, it is easier to write
+  models without knowing about the class of models being used.  This should
+  make probabliistic programming more accessible to non-experts.  Secondly,
+  parameter inference is more efficient if specialized algorithms are used
+  rather than the generic algorithms used to infer other random variables
+  (such as Metropolis Hastings).
+
+  We define an example probabilistic programming language with this feature
+  (Quipp) and show how it can be used to write machine learning models
+  concisely.
+
+
+  - Motivation for Quipp
+    - Explanation of "unknown functions"
+    - Writing machine learning algorithms as probabilistic programs
+    - Accessibility to non-experts
+    - Comparison to existing probabilistic programming languages
+      - In other languages, use random variables for parameters
+      - Random variables slower because they are updated independently
+
+  \section{Syntax}
+
+  
+
+  \section{Algorithm}
+
+    To perform inference of both latent variables and parameters, we first
+    translate the program to a factor graph.  Next, we run the
+    expectation maximization algorithm on this graph, iterating stages of
+    estimating latent variables using Metropolis Hastings and parameter
+    inference using Newton's method.
+
+    
+  - EM algorithm
+    - E step is Metropolis Hastings as in probabilistic programming
+    - M step is parameter optimization
+  - Types
+    - Brief overview of exponential families
+    - Gaussian
+    - Categorical
+    - Other exponential families could be added easily
+    - Some algebraic data types
+      - Tuples
+      - Either
+  - Conversion to factor graph
+    - Different types of nodes (exponential family)
+    - Different types of factors
+      - Constant factors
+      - Unifying values (e.g. conditioning on compound value equaling something)
+      - Factors from known random functions (e.g. gaussian)
+      - Factors from unknown function calls
+    - Example: clustering conversion to factor graph
+  - Inference in factor graph
+    - Metropolis hastings
+    - Proposal distribution inferred from nearby nodes
+
+  \section{Examples}
+
+  \section{Discussion}
+
+  - Comments about results
+  - Future directions
+    - Unbounded models
+    - Recursive algebraic data types
+
+
+\end{document}
+

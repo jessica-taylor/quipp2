@@ -19,103 +19,101 @@ class RandFunId(object):
     assert isinstance(id, int)
     self.state = state
     self.id = id
-    
+
 class GraphState(object):
 
   def __init__(self):
     self.vars = []
-    self.randFuns = []
+    self.rand_funs = []
     self.factors = []
-    self.varReplacements = {}
+    self.var_replacements = {}
 
-  def newVar(self, expfam):
+  def new_var(self, expfam):
     varid = len(self.vars)
     self.vars.append(expfam)
     return VarId(self, varid)
 
-  def resolveVar(self, varid):
-    if varid.id in self.varReplacements:
-      return self.varReplacements[varid.id]
+  def resolve_var(self, varid):
+    if varid.id in self.var_replacements:
+      return self.var_replacements[varid.id]
     else:
       return varid
 
-  def unifyVars(self, a, b):
+  def unify_vars(self, a, b):
     def replace(v):
       return a if v == b else v
 
-    def replaceInFactor(fac):
-      (facInfo, args) = fac
-      return (facInfo, map(replace, args))
+    def replace_in_factor(fac):
+      (fac_info, args) = fac
+      return (fac_info, map(replace, args))
 
-    self.varReplacements[a.id] = b
-    self.factors = map(replaceInFactor, self.factors)
+    self.var_replacements[a.id] = b
+    self.factors = map(replace_in_factor, self.factors)
     return a
 
-  def unifyValues(self, typ, a, b):
+  def unify_values(self, typ, a, b):
     # TODO: this fails for e.g. Maybe
-    avars = typ.embeddedVars(a)
-    bvars = typ.embeddedVars(b)
+    avars = typ.embedded_vars(a)
+    bvars = typ.embedded_vars(b)
     assert len(avars) == len(bvars)
     for av, bv in zip(avars, bvars):
-      self.unifyVars(av, bv)
+      self.unify_vars(av, bv)
     return a
 
-  def newFactor(self, facInfo, args):
+  def new_factor(self, fac_info, args):
     facid = len(self.factors)
-    self.factors.append((facInfo, map(self.resolveVar, args)))
+    self.factors.append((fac_info, map(self.resolve_var, args)))
     return FactorId(self, facid)
 
-  def newRandFun(self, argExpFams, resExpFam):
-    rfid = len(self.randFuns)
-    self.randFuns.append((argExpFams, resExpFam))
+  def new_rand_fun(self, arg_exp_fams, res_exp_fam):
+    rfid = len(self.rand_funs)
+    self.rand_funs.append((arg_exp_fams, res_exp_fam))
     return RandFunId(self, rfid)
 
-  def newSampleFromRandFun(self, rfid, argVars):
-    (argExpFams, resExpFam) = self.randFuns[rfid.id]
-    assert len(argExpFams) == len(argVars)
-    v = self.newVar(resExpFam)
-    fac = self.newFactor(rfid, [v] + argVars)
+  def new_sample_from_rand_fun(self, rfid, arg_vars):
+    (arg_exp_fams, res_exp_fam) = self.rand_funs[rfid.id]
+    assert len(arg_exp_fams) == len(arg_vars)
+    v = self.new_var(res_exp_fam)
+    fac = self.new_factor({'type': 'randFun', 'id': rfid.id}, [v] + arg_vars)
     return v
 
-  def newConstFactor(self, varid, value):
-    varid = self.resolveVar(varid)
+  def new_const_factor(self, varid, value):
+    varid = self.resolve_var(varid)
     ef = self.vars[varid]
-    return newFactor({'type': 'constant', 'value': value})
+    return new_factor({'type': 'constant', 'value': value})
 
-  def newConstVar(self, ef, value):
-    varid = self.newVar(ef)
-    fac = self.newConstFactor(varid, value)
+  def new_const_var(self, ef, value):
+    varid = self.new_var(ef)
+    fac = self.new_const_factor(varid, value)
     return varid
 
-  def randFunction(self, argTypes, resType):
-    argTupleType = Tuple(argTypes)
-    rfids = [self.newRandFun(argTupleType.expFams(), ef) for ef in resType.expFams()]
+  def rand_function(self, arg_types, res_type):
+    arg_tuple_type = Tuple(arg_types)
+    rfids = [self.new_rand_fun(arg_tuple_type.exp_fams(), ef) for ef in res_type.exp_fams()]
     def rf(*args):
-      assert len(args) == len(argTypes)
-      argVars = argTupleType.embeddedVars(tuple(args))
-      resVars = [self.newSampleFromRandFun(rfid, argVars) for rfid in rfids]
-      return resType.varsToValue(resVars)
+      assert len(args) == len(arg_types)
+      arg_vars = arg_tuple_type.embedded_vars(tuple(args))
+      res_vars = [self.new_sample_from_rand_fun(rfid, arg_vars) for rfid in rfids]
+      return res_type.vars_to_value(res_vars)
     return rf
 
-    
-
-  def toJSON(self):
+  def to_jSON(self):
     return {
       'vars': self.vars,
-      'randFuns': [{argExpFams: aefs, resExpFam: ref} for (aefs, ref) in self.randFuns],
+      'rand_funs': [{arg_exp_fams: aefs, res_exp_fam: ref} for (aefs, ref) in self.rand_funs],
       'factors': [{'factor': facinfo, 'argVarIds': args} for (facinfo, args) in self.factors]
     }
 
 """
 Type interface:
 
-t.expFams()
+t.exp_fams()
   Returns a list of exponential family names
 
-t.embeddedVars(value)
+t.embedded_vars(value)
   Returns a list of var ids in value
 
-t.varsToValue(vars)
+t.vars_to_value(vars)
   Given a queue of var ids, create a value
 
 t.unfreeze(state, value)
@@ -129,36 +127,36 @@ class DoubleValue(object):
   def freeze(self, varvals):
     return varvals[self.varid]
 
-class Double_class(object):
+class DoubleClass(object):
 
-  def expFams(self):
+  def exp_fams(self):
     return ['gaussian']
 
-  def embeddedVars(self, value):
+  def embedded_vars(self, value):
     return [value.varid]
 
-  def varsToValue(self, vars):
+  def vars_to_value(self, vars):
     return [DoubleValue(vars.get())]
 
   def unfreeze(self, state, value):
-    return DoubleValue(state.newConstVar('gaussian', value))
+    return DoubleValue(state.new_const_var('gaussian', value))
     
 
-Double = Double_class()
+Double = DoubleClass()
 
 class Bool_class(object):
 
-  def expFams(self):
+  def exp_fams(self):
     return ['bernoulli']
 
-  def embeddedVars(self, value):
+  def embedded_vars(self, value):
     return [value]
 
-  def varsToValue(self, vars):
+  def vars_to_value(self, vars):
     return [vars.get()]
 
   def unfreeze(self, state, value):
-    return BoolValue(state.newConstVar('bernoulli', value))
+    return Bool_value(state.new_const_var('bernoulli', value))
 
 Bool = Bool_class()
 
@@ -175,22 +173,22 @@ class Tuple(object):
   def __init__(self, *types):
     self.types = types
 
-  def expFams(self):
+  def exp_fams(self):
     ef = []
     for t in self.types:
-      ef.extend(t.expFams())
+      ef.extend(t.exp_fams())
     return ef
 
-  def embeddedVars(self, value):
+  def embedded_vars(self, value):
     vs = []
     for (t, v) in zip(self.types, value.fields):
-      vs.extend(t.embeddedVars(v))
+      vs.extend(t.embedded_vars(v))
     return vs
 
-  def varsToValue(self, vars):
+  def vars_to_value(self, vars):
     val = []
     for t in self.types:
-      val.append(t.varsToValue(vars))
+      val.append(t.vars_to_value(vars))
     return TupleValue(val)
 
   def unfreeze(self, state, value):
@@ -214,35 +212,35 @@ class Categorical(object):
   def __init__(self, n):
     self.n = n
 
-  def expFams(self):
+  def exp_fams(self):
     return ['bernoulli'] * (self.n - 1)
 
-  def embeddedVars(self, value):
+  def embedded_vars(self, value):
     return value.varids
 
-  def varsToValue(self, vars):
+  def vars_to_value(self, vars):
     varids = []
     for i in range(self.n - 1):
       varids.append(vars.get())
     return CategoricalValue(varids)
 
   def unfreeze(self, state, value):
-    return CategoricalValue([state.newConstVar('bernoulli', value == i) for i in range(self.n - 1)])
+    return CategoricalValue([state.new_const_var('bernoulli', value == i) for i in range(self.n - 1)])
 
 
 def Vector(n, typ):
   return Tuple(*([typ]*n))
 
-currentGraphState = GraphState()
+current_graph_state = GraphState()
 
-def randFunction(t1, t2):
-  return currentGraphState.randFunction(t1, t2)
+def rand_function(t1, t2):
+  return current_graph_state.rand_function(t1, t2)
 
-def conditioned_network(state, typ, sampler, frozenSamps):
+def conditioned_network(state, typ, sampler, frozen_samps):
   samples = [sampler() for i in range(len(samps))]
-  for (latent, s), fs in zip(samples, frozenSamps):
+  for (latent, s), fs in zip(samples, frozen_samps):
     unfrozen = typ.unfreeze(fs)
-    state.unifyValues(s, unfrozen)
+    state.unify_values(s, unfrozen)
   return [latent for (latent, _) in samples]
 
 
