@@ -194,6 +194,7 @@ timesLikelihood (NatParam n1) (NatParam n2)
 
 productLikelihoods :: Eq v => [Likelihood v] -> Maybe (Likelihood v)
 productLikelihoods (l:ls) = foldlM timesLikelihood l ls
+productLikelihoods [] = error "Cannot take the product of no likelihoods"
 
 sampleLikelihood :: ExpFam v -> Likelihood v -> RVar v
 sampleLikelihood _ (KnownValue v) = return v

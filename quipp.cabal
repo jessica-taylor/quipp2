@@ -17,7 +17,8 @@ cabal-version:       >=1.10
 
 executable quipp_main
   main-is: Main.hs
-  exposed-modules:     Quipp.Parser, Quipp.Factor, Quipp.Value, Quipp.ExpFam, Quipp.Vmp, Quipp.BayesNet, Quipp.ParamInference
+  -- exposed-modules:     Quipp.Parser, Quipp.Factor, Quipp.Value, Quipp.ExpFam, Quipp.Vmp, Quipp.BayesNet, Quipp.ParamInference
+  -- exposed-modules:     Export
   -- other-modules:       
   -- other-extensions:    
   build-depends:
@@ -33,7 +34,7 @@ executable quipp_main
     parsec >= 3.1,
     MissingH >= 1.2,
     time >= 1.4,
-    HaPy == 0.1.*
+    json >= 0.3.3
 
   hs-source-dirs: src
   default-language:    Haskell2010

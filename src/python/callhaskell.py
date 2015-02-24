@@ -55,6 +55,18 @@ pyStepEM(templ, state, params)
   return [newState, newParams]
 """
 
+def state_to_varvals(state):
+  m = {}
+  for (v, s) in state:
+    m[v] = s[u'Left']
+  return m
+
+def varvals_to_state(varvals):
+  s = []
+  for k in varvals:
+    s.append([k, {u'Left': varvals[k]}])
+
+
 def temp_file_name(prefix=''):
     return '/tmp/' + prefix + '_' + str(uuid.uuid1())
 
@@ -77,17 +89,17 @@ def dump_params(params):
     return params_file
 
 def load_contents(fname):
-    return json.load(open(fname))
+  return json.load(open(fname))
 
 def hs_rand_template_params(templ):
     params_file = temp_file_name('params')
     run_hs('randTemplateParams', dump_template(templ), params_file)
-    return params_file
+    return load_contents(params_file)
 
 def hs_sample_bayes_net(templ, params):
     state_file = temp_file_name('state')
-    run_hs('randTemplateParams', dump_template(templ), dump_params(params), state_file)
-    return state_file
+    run_hs('sampleBayesNet', dump_template(templ), dump_params(params), state_file)
+    return load_contents(state_file)
 
 def hs_init_em(templ):
     state_file = temp_file_name('state')
@@ -101,7 +113,7 @@ def hs_step_em(templ, state, params):
     run_hs('stepEM', dump_template(templ), state_file, params_file)
     return (load_contents(state_file), load_contents(params_file))
 
-__all__ = ['hs_rand_template_params', 'hs_sample_bayes_net', 'hs_init_em', 'hs_step_em']
+__all__ = ['hs_rand_template_params', 'hs_sample_bayes_net', 'hs_init_em', 'hs_step_em', 'state_to_varvals', 'varvals_to_state']
 
 if __name__ == '__main__':
     print hs_init_em({'vars': [], 'randFuns': [], 'factors': []})

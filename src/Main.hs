@@ -1,66 +1,147 @@
+{-# LANGUAGE FlexibleInstances #-}
 module Main where
 
-import Data.Time.Clock (getCurrentTime, utctDayTime)
-import Control.Monad (forM_)
-import Debug.Trace
 import Control.Monad (liftM)
-import Control.Monad.Trans (lift)
-import Data.Maybe (fromJust)
-import Data.Random (RVar, RVarT, runRVarTWith, StdRandom(StdRandom))
-import Text.ParserCombinators.Parsec
-import Data.Function (on)
-import Data.Map (Map)
+import Control.Applicative ((<$>), (<*>))
+import Data.Map (Map, (!))
 import qualified Data.Map as Map
-import Data.String.Utils (split)
+import System.Environment (getArgs)
+import qualified Text.JSON as JSON
 
+import Quipp.BayesNet
 import Quipp.ExpFam
 import Quipp.Factor
-import Quipp.Vmp
+import Quipp.GraphBuilder
 import Quipp.Util
 import Quipp.Value
-import Quipp.GraphBuilder
-import Quipp.Parser
-import Quipp.Interpreter
-import Quipp.ParamInference
+import Quipp.Vmp
 
-fPairGraphValue x y = FCompoundGraphValue "Pair" [x, y]
 
-example1dClustering = ("1d_clustering.quipp", map (FValueGraphValue . DoubleValue) [
-  1.0, 1.1, 1.2, 1.4, 6.7, 7.9, 8.9, 5.0
-  ])
 
-example2dClustering points = ("nd_clustering.quipp", map (uncurry (fPairGraphValue `on` (FValueGraphValue . DoubleValue))) points)
---  (1.5, 11.0), (2.2, 10.5), (1.4, 9.8), (2.5, 20.5), (5.3, 22.7),
---  (1.1, 18.6), (2.3, 21.7), (3.5, 23.8), (4.3, 25.3), (5.5, 28.0)
---  ])
+zip1_2 :: [a] -> [(b, c)] -> [(a, b, c)]
+zip1_2 xs yzs = zipWith (\x (y, z) -> (x, y, z)) xs yzs
 
-irisData = do
-  strs <- readFile "data/iris.data.txt"
-  return [(read a :: Double, read c :: Double) | line <- lines strs, line /= "", let [a, b, c, d, e] = split "," line]
+decodeExpFam :: String -> ExpFam Value
+decodeExpFam "gaussian" = gaussianValueExpFam
+decodeExpFam "bernoulli" = boolValueExpFam
+
+getResult :: JSON.Result a -> a
+getResult (JSON.Ok a) = a
+getResult (JSON.Error str) = error str
+
+decodeJSON :: JSON.JSON a => String -> a
+decodeJSON = getResult . JSON.decode
+
+infixl 9 !:
+(!:) :: JSON.JSON b => JSON.JSValue -> String -> b
+(JSON.JSObject obj) !: key = case Map.lookup key (Map.fromList (JSON.fromJSObject obj)) of
+  Nothing -> error ("Key not found: " ++ key ++ " in " ++ show obj)
+  Just result -> getResult $ JSON.readJSON result
+
+decodeTemplate :: String -> FactorGraphTemplate Value
+decodeTemplate str = makeFactorGraphTemplate
+    (map convVar (m !: "vars"))
+    (zip1_2 [0..] $ map convRandFun (m !: "randFuns"))
+    (zip1_2 [0..] $ map convFactor (m !: "factors"))
+  where m = decodeJSON str
+        convVar (i, ef) = (i, decodeExpFam ef)
+        convRandFun rf =
+          (decodeExpFam (rf !: "resExpFam"),
+           map decodeExpFam (rf !: "argExpFams"))
+        convFactor fac =
+          let facinfo = fac !: "factor" in
+          (case facinfo !: "type" of
+             "randFun" -> Right (facinfo !: "id")
+             "constant" -> Left $ constFactor (decodeExpFam (facinfo !: "expFam")) $ case facinfo !: "expFam" of
+               "gaussian" -> DoubleValue (facinfo !: "value")
+               "bernoulli" -> BoolValue (facinfo !: "value"),
+           fac !: "argVarIds")
+
+decodeParams :: String -> FactorGraphParams
+decodeParams = decodeJSON
+
+encodeParams :: FactorGraphParams -> String
+encodeParams = JSON.encode
+
+instance JSON.JSON Value where
+  readJSON js@(JSON.JSRational _ _) = fmap DoubleValue $ JSON.readJSON js
+  readJSON js@(JSON.JSBool _) = fmap BoolValue $ JSON.readJSON js
+  showJSON (DoubleValue d) = JSON.showJSON d
+  showJSON (BoolValue b) = JSON.showJSON b
+
+instance JSON.JSON (Likelihood Value) where
+  readJSON x = case getResult $ JSON.readJSON x of
+    Left v -> JSON.Ok $ KnownValue v
+    Right np -> JSON.Ok $ NatParam np
+  showJSON (KnownValue v) = JSON.showJSON (Left v :: Either Value [Double])
+  showJSON (NatParam np) = JSON.showJSON (Right np :: Either Value [Double])
+
+
+decodeState :: String -> FactorGraphState Value
+decodeState = decodeJSON
+
+encodeState :: FactorGraphState Value -> String
+encodeState = JSON.encode
+
+pyRandTemplateParams :: FactorGraphTemplate Value -> IO FactorGraphParams
+pyRandTemplateParams templ = sampleRVar $ randTemplateParams 10.0 templ
+
+pySampleBayesNet :: FactorGraphTemplate Value -> FactorGraphParams -> IO (FactorGraphState Value)
+pySampleBayesNet templ params =
+  sampleRVar $ liftM (fmap KnownValue) $ sampleBayesNet (instantiateTemplate templ params)
+
+type FST = (FactorGraphState Value, FactorGraphParams)
+
+pyInitEM :: FactorGraphTemplate Value -> IO FST
+pyInitEM templ = do
+  params <- sampleRVar $ randTemplateParams 0.001 templ
+  return (initFactorGraphState (instantiateTemplate templ params), params)
+
+
+pyStepEM :: FactorGraphTemplate Value -> FST -> IO FST
+pyStepEM templ (state, params) = sampleRVar $ do
+  let factorGraph = instantiateTemplate templ params
+  newStates <- sampleRVarTWith (\(Just x) -> return x) $ iterateM 10 (stepMH factorGraph) state
+  params' <- updateTemplateParamsMH templ params [(1.0, s) | s <- takeEvery 1 (tail newStates)]
+  return (last newStates, params')
+
+
+readTemplate :: String -> IO (FactorGraphTemplate Value)
+readTemplate f = decodeTemplate <$> readFile f
+
+readParams :: String -> IO FactorGraphParams
+readParams f = decodeParams <$> readFile f
+
+writeParams :: String -> FactorGraphParams -> IO ()
+writeParams f params = writeFile f (encodeParams params)
+
+readState :: String -> IO (FactorGraphState Value)
+readState f = decodeState <$> readFile f
+
+writeState :: String -> FactorGraphState Value -> IO ()
+writeState f state = writeFile f (encodeState state)
 
 main = do
-  -- let (filename, samples) = example2dClustering
-  datapoints <- irisData
-  let (filename, samples) = example2dClustering datapoints
-  -- print datapoints
-  prelude <- readFile "Quipp/prelude.quipp"
-  contents <- readFile $ "examples/" ++ filename
-  let fullSource = prelude ++ contents
-  let resultExpr =
-        case parse toplevel "FILE" fullSource of
-          Left err -> error $ show err
-          Right result -> result
-      builder = interpretExpr defaultContext Map.empty resultExpr
-      -- (template, result) = runGraphBuilder builder
-  print resultExpr
-  iters <- sampleRVar $ inferParametersFromSamples builder samples
-  -- (actualParams, actualLatents, samples, iters) <- sampleRVar $ inferParameters (ParamInferenceOptions {optsNumSamples = 20}) t builder
-  -- putStrLn $ "ACTUAL PARAMS: " ++ show actualParams
-  -- putStrLn $ "ACTUAL LATENTS: " ++ show actualLatents
-  -- putStrLn $ "SAMPLES: " ++ show samples
-  forM_ (take 10 iters) $ \(latents, params) -> do
-    print ([v | FValueGraphValue (BoolValue v) <- latents], Map.toList params)
-    -- putStrLn $ "LATENTS: " ++ show latents
-    -- fmap utctDayTime getCurrentTime >>= print
-    -- putStrLn $ "EM PARAMS: " ++ show params
-    -- fmap utctDayTime getCurrentTime >>= print
+  args <- getArgs
+  case args of
+    ["randTemplateParams", templateFile, paramsFile] ->
+      readTemplate templateFile >>= pyRandTemplateParams >>= writeParams paramsFile
+    ["sampleBayesNet", templateFile, paramsFile, stateFile] -> do
+      templ <- readTemplate templateFile
+      params <- readParams paramsFile
+      pySampleBayesNet templ params >>= writeState stateFile
+    ["initEM", templateFile, stateFile, paramsFile] -> do
+      templ <- readTemplate templateFile
+      (state, params) <- pyInitEM templ
+      print stateFile
+      writeState stateFile state
+      writeParams paramsFile params
+    ["stepEM", templateFile, stateFile, paramsFile] -> do
+      templ <- readTemplate templateFile
+      state <- readState stateFile
+      params <- readParams paramsFile
+      (state', params') <- pyStepEM templ (state, params)
+      writeState stateFile state'
+      writeParams paramsFile params'
+    _ -> error ("Bad command " ++ show args)
+
