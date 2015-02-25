@@ -87,7 +87,8 @@
 
   \section{Syntax}
 
-  Here is an example of a Quipp program to perform clustering:
+  Quipp is implemented as a Python library, so Quipp programs are written as Python programs that have access
+  to special functions.  Here is an example of a Quipp program to perform clustering:
 
 
   \begin{verbatim}
@@ -149,12 +150,8 @@
 
     In the factor graph, there are 2 types of variables: real numbers
     and categorical values.
-    In Quipp, there are more value types than this.  Specifically,
-    in addition to real numbers and categorical types, tuples
-    are also supported.
-    To translate a Quipp program to a factor graph, we
-    map each value to a list of variables, and create factors
-    over all these variables.
+    In Quipp, we have an additonal tuple type, which gets translated
+    to multiple underlying variables in the factor graph.
 
     There are a few different types of factors:
     \begin{enumerate}
@@ -173,6 +170,82 @@
 
 
   \section{Examples}
+
+  \subsection{Clustering}
+\begin{verbatim}
+dim = 2
+nclusters = 3
+
+PointType = Vector(dim, Double)
+ClusterType = Categorical(nclusters)
+
+get_cluster = rand_function(ClusterType)
+get_point = rand_function(ClusterType, PointType)
+
+def sample():
+  cluster = get_cluster()
+  return (cluster, get_point(cluster))
+\end{verbatim}
+
+In this example, we cluster 2d points into 3 different clusters.  Given a cluster, the distribution for a point is some independent Gaussian distribution.  This is similar to fuzzy c-means clustering.
+
+
+  \subsection{Factor Analysis}
+
+\begin{verbatim}
+num_components = 3
+point_dim = 5
+
+ComponentsType = Vector(num_components, Double)
+PointType = Vector(point_dim, Double)
+
+get_point = randFunction(ComponentsType, PointType)
+
+def sample():
+  components = [normal(0, 1) for i in range(num_components)]
+  return (comenents, get_point(components))
+\end{verbatim}
+
+The factor analysis model is very similar to the clustering model.  The main difference is that we replace the categorical \texttt{ClusterType} type with a vector type.  This results in the model attempting to find each point as an affine function of a vector of standard normal values.
+
+  \subsection{Hidden Markov model}
+\begin{verbatim}
+num_states = 5
+num_observations = 3
+sequence_length = 10
+
+StateType = Categorical(num_states)
+ObsType = Categorical(num_observations)
+
+trans_fun = rand_function(StateType, StateType)
+obs_fun = rand_function(StateType, ObsType)
+
+def sample():
+  states = [uniform(num_states)]
+  for i in range(sequence_length - 1):
+    states.append(trans_fun(states[-1]))
+  return (states, [obs_fun(s) for s in states])
+\end{verbatim}
+
+In this example, we use the unknown function \texttt{trans\_fun} for state transitions and \texttt{obs\_fun} for observations.  This means that we will learn both the state transitions and the observation distribution.
+
+\subsection{Latent Dirichlet Allocation}
+
+\begin{verbatim}
+n_classes = 10
+n_words = 10000
+n_words_per_document = 1000
+
+ClassType = Categorical(n_classes)
+WordType = Categorical(n_words)
+
+class_to_word = rand_function(ClassType, WordType)
+
+def sample():
+    which_class = uniform_categorical(n_classes)
+    words = [class_to_word(which_class) for i in range(n_words_per_document)]
+    return (which_class, words)
+\end{verbatim}
 
   \section{Discussion}
 

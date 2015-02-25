@@ -58,6 +58,9 @@ decodeTemplate str = makeFactorGraphTemplate
           let facinfo = fac !: "factor" in
           (case facinfo !: "type" of
              "randFun" -> Right (facinfo !: "id")
+             "uniformCategorical" ->
+               let n = facinfo !: "n" in
+               Left $ expFamFactor (categoricalValueExpFam n) [] (replicate (n - 1) 0.0, replicate (n-1) [])
              "constant" -> Left $ constFactor (decodeExpFam (facinfo !: "expFam")) $ case facinfo !: "expFam" !: "type" of
                "gaussian" -> DoubleValue (facinfo !: "value")
                "bernoulli" -> BoolValue (facinfo !: "value")

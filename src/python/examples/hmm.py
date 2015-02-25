@@ -9,7 +9,6 @@ ObsType = Categorical(num_observations)
 trans_fun = rand_function(StateType, StateType)
 obs_fun = rand_function(StateType, ObsType)
 
-
 def sample():
   states = [uniform(num_states)]
   for i in range(9):

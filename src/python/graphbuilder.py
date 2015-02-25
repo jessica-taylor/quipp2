@@ -290,6 +290,11 @@ current_graph_state = GraphState()
 def rand_function(*ts):
   return current_graph_state.rand_function(ts[:-1], ts[-1])
 
+def UniformCategorical(n):
+  v = current_graph_state.new_var(categorical_exp_fam(n))
+  current_graph_state.new_factor({'type': 'uniformCategorical', 'n': n}, [v])
+  return CategoricalValue(v, n)
+
 def conditioned_network(state, typ, sampler, frozen_samps):
   samples = [sampler() for i in range(len(samps))]
   for (latent, s), fs in zip(samples, frozen_samps):
