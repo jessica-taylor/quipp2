@@ -92,33 +92,35 @@
 
 
   \begin{verbatim}
-  PointType = Vector(2, Double)
-  ClusterType = Categorical(3)
+  dim = 2
+  nclusters = 3
+  PointType = Vector(dim, Double)
+  ClusterType = Categorical(nclusters)
 
-  get_cluster = rand_function(ClusterType)
   get_point = rand_function(ClusterType, PointType)
 
   def sample():
-    cluster = get_cluster()
+    cluster = uniform_categorical(nclusters)
     return (cluster, get_point(cluster))
   \end{verbatim}
 
   Notice that we declared two types (\texttt{PointType} and \texttt{ClusterType})
-  and two random functions (\texttt{get\_cluster} and \texttt{get\_point}).
+  and one random function \texttt{get\_point}).
   Type annotations are necessary for random functions.  The type
   \texttt{Vector(2, Double)} expresses the fact that the points are 2-dimensional,
   and the type \texttt{Categorical(3)} expresses the fact that there are 3
-  possible clusters (so a cluster may be either 0, 1, or 2).  We do not know
-  the distribution over clusters or over points given a cluster.
-  We will fill in the \texttt{get\_cluster} function with
-  a learned categorical distribution, and we will fill in the
+  possible clusters (so a cluster may be either 0, 1, or 2).  We assume that
+  the disttribution over clusters is uniform, but we do not know the distribution
+  of points in each cluster.
+  We will fill in the
   \texttt{get\_point} function with a learned unknown linear function with noise.
 
   \section{Class of Distributions}
 
-    For unknown functions, the class of functions used is a kind
+    For unknown functions, the class of random functions used is a kind
     of generalized linear model.  We assume that the result
-    is distributed from some exponential family.  We label
+    is distributed from some exponential family whose natural
+    parameters are determined from the arguments.  We label
     some subset of the sufficient statistics as \emph{features}.  The natural
     parameters corresponding to non-features are constant, while natural
     parameters corresponding to features are determined as an affine
@@ -189,6 +191,37 @@ def sample():
 
 In this example, we cluster 2d points into 3 different clusters.  Given a cluster, the distribution for a point is some independent Gaussian distribution.  This is similar to fuzzy c-means clustering.
 
+We randomly generated parameters for this example 100 times, and each time took 100 samples and then ran 10 EM iterations.  The accuracy is defined as the maximum percentage of points assigned to the correct cluster, for any permutation of clusters.  On average, accuracy increased in each EM iteration, as shown it this graph:
+
+\begin{center}
+\includegraphics[scale=0.5]{cluster_accuracy.png}
+\end{center}
+
+\subsection{Naive Bayes}
+
+\begin{verbatim}
+nfeatures = 10
+FeaturesType = Vector(nfeatures, Bool)
+
+get_class = rand_function(Unit, Bool)
+
+class_1_features = rand_function(Unit, FeaturesType)
+class_2_features = rand_function(Unit, FeaturesType)
+
+def sample():
+  which_class = get_class()
+  if which_class:
+    features = class_1_features()
+  else:
+    features = class_2_features()
+  return (which_class, features)
+\end{verbatim}
+
+The naive Bayes model is similar to the clustering model.  We have two classes and a feature
+distribution for each.  Since each feature is boolean, we will learn
+a different categorical distribution for each class.
+
+(figure should show average classification accuracy)
 
   \subsection{Factor Analysis}
 
@@ -199,7 +232,7 @@ point_dim = 5
 ComponentsType = Vector(num_components, Double)
 PointType = Vector(point_dim, Double)
 
-get_point = randFunction(ComponentsType, PointType)
+get_point = rand_function(ComponentsType, PointType)
 
 def sample():
   components = [normal(0, 1) for i in range(num_components)]
@@ -208,6 +241,7 @@ def sample():
 
 The factor analysis model is very similar to the clustering model.  The main difference is that we replace the categorical \texttt{ClusterType} type with a vector type.  This results in the model attempting to find each point as an affine function of a vector of standard normal values.
 
+(figure should show accuracy by EM iteration.  Accuracy can be measured by distances between different factor coefficients, when ordered according to some permutation)
   \subsection{Hidden Markov model}
 \begin{verbatim}
 num_states = 5
@@ -229,11 +263,12 @@ def sample():
 
 In this example, we use the unknown function \texttt{trans\_fun} for state transitions and \texttt{obs\_fun} for observations.  This means that we will learn both the state transitions and the observation distribution.
 
+
 \subsection{Latent Dirichlet Allocation}
 
 \begin{verbatim}
 n_classes = 10
-n_words = 10000
+n_words = 100
 n_words_per_document = 1000
 
 ClassType = Categorical(n_classes)
@@ -246,6 +281,36 @@ def sample():
     words = [class_to_word(which_class) for i in range(n_words_per_document)]
     return (which_class, words)
 \end{verbatim}
+
+In this example, we use the unknown function \texttt{class\_to\_word} to map classes to word distributions.  Note that each column of the matrix of parameters for \texttt{class\_to\_word} will represent a categorical distribution over words, and there will be one column for each class.
+
+(figure should show accuracy over time.  Accuracy can be measured as distance between the learned categorical distributions, for some permutation of classes)
+
+\subsection{Neural Network}
+
+\begin{verbatim}
+input_dim = 100
+hidden_dim = 20
+output_dim = 2
+
+InputType = Categorical(input_dim)
+HiddenType = Categorical(hidden_dim)
+OutputType = Categorical(output_dim)
+
+input_to_hidden = rand_function(InputType, HiddenType)
+hidden_to_output = rand_function(HiddenType, OutputType)
+
+def sample(input_layer):
+  hidden_layer = input_to_hidden(input_layer)
+  output_layer = hidden_to_output(hidden_layer)
+  return ((), output_layer)
+\end{verbatim}
+
+\subsection{A more complex model}
+
+TODO: come up with a more complex model.  Show how this model can be iteratively improved by adding information.  It would make sense for this to be some sort of data science type  
+
+
 
   \section{Discussion}
 

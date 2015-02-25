@@ -1,4 +1,5 @@
 import math
+import itertools
 from callhaskell import *
 
 class Queue(object):
@@ -325,18 +326,66 @@ def translate_params_for_fn(params):
     factors = [params[0][0]] + params[1][0]
     return (variance, [f*variance for f in factors])
 
+def params_to_cluster_centers(params):
+  d = dict(params)
+  cluster_centers = []
+  for i in d:
+    ps = d[i]
+    variance = -1.0 / (2 * ps[0][1])
+    factors = [ps[0][0]] + ps[1][0]
+    scaled_factors = [f*variance for f in factors]
+    centers = [scaled_factors[0]] + [x + scaled_factors[0] for x in scaled_factors[1:]]
+    cluster_centers.append(centers)
+  return zip(*cluster_centers)
+
+def cluster_centers_error(cs1, cs2):
+  errs = []
+  def tup_dist(t1, t2):
+    return sum((a-b)**2 for (a, b) in zip(t1, t2))
+  for cs in itertools.permutations(cs1):
+    errs.append(sum(map(tup_dist, cs, cs2)))
+  return min(errs)
+
+def cluster_assignment_accuracy(cs1, cs2):
+  accuracies = []
+  for perm in itertools.permutations(range(3)):
+    accuracies.append(float(len([() for (a, b) in zip(cs1, cs2) if a == perm[b]])) / len(cs1))
+  return max(accuracies)
+
+
+
 def translate_params(params):
   return [(x, translate_params_for_fn(y)) for (x, y) in params]
 
-def run_example(sampler):
-  n = 1000
-  samples = [sampler() for i in range(n)]
-  templ = current_graph_state.to_JSON()
-  rand_params = hs_rand_template_params(templ)
-  varvals = state_to_varvals(hs_sample_bayes_net(templ, rand_params))
-  # TODO freeze only second value
-  frozen_samples = [freeze_value(samp, varvals) for samp in samples]
-  state_params_list = infer_parameters_from_samples(current_graph_state, samples, [x[1] for x in frozen_samples])
-  print translate_params(rand_params)
-  print translate_params(state_params_list[-1][1])
-  print str(state_params_list[-2][0]) == str(state_params_list[-1][0])
+
+def mean(xs):
+  return sum(xs) / len(xs)
+
+def run_example(run):
+  global current_graph_state
+  n = 100
+  accs = []
+  for i in range(100):
+    current_graph_state = GraphState()
+    sampler = run()
+    samples = [sampler() for i in range(n)]
+    templ = current_graph_state.to_JSON()
+    rand_params = hs_rand_template_params(templ)
+    varvals = state_to_varvals(hs_sample_bayes_net(templ, rand_params))
+    frozen_samples = [freeze_value(samp, varvals) for samp in samples]
+    true_latents = [x[0] for x in frozen_samples]
+    print true_latents
+    state_params_list = infer_parameters_from_samples(current_graph_state, samples, [x[1] for x in frozen_samples])
+    rand_cs = params_to_cluster_centers(rand_params)
+    iter_accs = []
+    j = 0
+    for (state, params) in state_params_list:
+      cs = params_to_cluster_centers(params)
+      if j > 1:
+        varvals = state_to_varvals(state)
+        state_latents = [freeze_value(samp[0], varvals) for samp in samples]
+        acc = cluster_assignment_accuracy(true_latents, state_latents)
+        iter_accs.append(acc)
+      j += 1
+    accs.append(iter_accs)
+  print map(mean, zip(*accs))
