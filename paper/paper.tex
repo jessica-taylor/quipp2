@@ -29,22 +29,25 @@
   \maketitle
 
   \begin{abstract}
-    Probabilistic programs with unknown functions
+    In probabilistic programs, sometimes it is difficult to specify the correct
+    parameterized family of distributions.  We explore an extension to
+    probabilistic programming languages that allows programmers to mark some
+    distributions as unspecified.  Then, we can fill in the distribution with
+    some family and infer parameters.
   \end{abstract}
 
   \section{Introduction}
 
   Probabilistic programming languages have made it easier to specify Bayesian
-  models as programs.  Once a probabilistic model is written as a probabilistic
+  models as programs.  Once a model is written as a probabilistic
   program, it is possible to use generic inference algorithms (such as
   Metropolis Hastings) to perform inference.
-    - Church example
 
   In this paper, we discuss a feature of probabilistic programming languages
-  that makes it easy to specify models containing unknown functions.
-  Specifically, we allow programs to specify that some random functions
+  that makes it easier to specify some models.
+  Specifically, we allow the programmer to specify that some random functions
   are unknown.  The system will fill in these unknown functions with
-  some reasonable default class of distributions based on the types and
+  some reasonable default family of distributions based on the types and
   proceed to infer the parameters to this distribution using the
   expectation maximization algorithm.
 
@@ -59,6 +62,20 @@
   (Quipp) and show how it can be used to write machine learning models
   concisely.
 
+  In an ordinary probabilistic programming language (such as Church),
+  it would be possible to treat parameters as random variables.  This
+  would allow ordinary inference algorithms to infer parameters.  However,
+  there are advantages of having unknown functions as a feature
+  in the language.
+  First, it is easier to
+  write programs without knowing the details of different distributions.
+  Second, specialized algorithms can be used to make parameter inference
+  faster.
+
+  Inference in these models is performed using the expectation-maximization
+  algorithm, with alternating steps of inferring latent variables and optimizing
+  parameters.
+
 
   - Motivation for Quipp
     - Explanation of "unknown functions"
@@ -70,9 +87,59 @@
 
   \section{Syntax}
 
-  
+  Here is an example of a Quipp program to perform clustering:
 
-  \section{Algorithm}
+
+  \begin{verbatim}
+  PointType = Vector(2, Double)
+  ClusterType = Categorical(3)
+
+  get_cluster = rand_function(ClusterType)
+  get_point = rand_function(ClusterType, PointType)
+
+  def sample():
+    cluster = get_cluster()
+    return (cluster, get_point(cluster))
+  \end{verbatim}
+
+  Notice that we declared two types (\texttt{PointType} and \texttt{ClusterType})
+  and two random functions (\texttt{get\_cluster} and \texttt{get\_point}).
+  Type annotations are necessary for random functions.  The type
+  \texttt{Vector(2, Double)} expresses the fact that the points are 2-dimensional,
+  and the type \texttt{Categorical(3)} expresses the fact that there are 3
+  possible clusters (so a cluster may be either 0, 1, or 2).  We do not know
+  the distribution over clusters or over points given a cluster.
+  We will fill in the \texttt{get\_cluster} function with
+  a learned categorical distribution, and we will fill in the
+  \texttt{get\_point} function with a learned unknown linear function with noise.
+
+  \section{Class of Distributions}
+
+    For unknown functions, the class of functions used is a kind
+    of generalized linear model.  We assume that the result
+    is distributed from some exponential family.  We label
+    some subset of the sufficient statistics as \emph{features}.  The natural
+    parameters corresponding to non-features are constant, while natural
+    parameters corresponding to features are determined as an affine
+    function of the features of the arguments.
+
+    Let $\psi_x$ be a matrix such that $\psi \phi(x)$ is a vector of the
+    features of $x$.  Then
+
+    $$p_{\mathbf{N}}(y | x) = \exp(\psi(x)^T N \phi(y) - g(N^T \psi(X)))$$
+
+    Given $(x, y)$ samples, parameter estimation to maximize log probability is a convex
+    problem:
+
+    \begin{align*}
+      \log p_{\mathbf{N}}(y | x) = \psi(x)^T N \phi(y) - g(N^T \psi(X))
+    \end{align*}
+    since the log probability function is concave when $g$ is convex (as it is
+    for any exponential family distribution).
+
+    Therefore, it is possible to use Newton's method to optimize the parameters.
+
+  \section{Inference}
 
     To perform inference of both latent variables and parameters, we first
     translate the program to a factor graph.  Next, we run the
@@ -80,29 +147,30 @@
     estimating latent variables using Metropolis Hastings and parameter
     inference using Newton's method.
 
-    
-  - EM algorithm
-    - E step is Metropolis Hastings as in probabilistic programming
-    - M step is parameter optimization
-  - Types
-    - Brief overview of exponential families
-    - Gaussian
-    - Categorical
-    - Other exponential families could be added easily
-    - Some algebraic data types
-      - Tuples
-      - Either
-  - Conversion to factor graph
-    - Different types of nodes (exponential family)
-    - Different types of factors
-      - Constant factors
-      - Unifying values (e.g. conditioning on compound value equaling something)
-      - Factors from known random functions (e.g. gaussian)
-      - Factors from unknown function calls
-    - Example: clustering conversion to factor graph
-  - Inference in factor graph
-    - Metropolis hastings
-    - Proposal distribution inferred from nearby nodes
+    In the factor graph, there are 2 types of variables: real numbers
+    and categorical values.
+    In Quipp, there are more value types than this.  Specifically,
+    in addition to real numbers and categorical types, tuples
+    are also supported.
+    To translate a Quipp program to a factor graph, we
+    map each value to a list of variables, and create factors
+    over all these variables.
+
+    There are a few different types of factors:
+    \begin{enumerate}
+      \item Factors representing known distributions
+      \item Factors representing unknown distribution
+      \item Factors asserting that a value is equal to some constant
+    \end{enumerate}
+
+    How is inference in the factor graph performed?  We use the Metropolis Hastings
+    algorithm, updating one node at a time.  To get a proposal for a given node,
+    we approximate the local distribution using message passing (similar to
+    in variational message passing).  Specifically, for each factor
+    $f(x_1, x_2, ..., x_n)$ and each $1 \leq i \leq n$, we send a message
+    to variable $x_i$ that approximates $x_i \mapsto f(x_1, x_2, ..., x_n)$.
+
+
 
   \section{Examples}
 

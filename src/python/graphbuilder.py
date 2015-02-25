@@ -1,3 +1,4 @@
+import math
 from callhaskell import *
 
 class Queue(object):
@@ -53,16 +54,8 @@ class GraphState(object):
       return varid
 
   def unify_vars(self, a, b):
-    def replace(v):
-      return a if v == b else v
-
-    def replace_in_factor(fac):
-      (fac_info, args) = fac
-      return (fac_info, map(replace, args))
-
     self.var_replacements[b.id] = a
     del self.vars[b.id]
-    self.factors = map(replace_in_factor, self.factors)
     return a
 
   def unify_values(self, typ, a, b):
@@ -112,10 +105,15 @@ class GraphState(object):
     return rf
 
   def to_JSON(self):
+    def replace_id(varid):
+      if varid.id in self.var_replacements:
+        return self.var_replacements[varid.id].id
+      else:
+        return varid.id
     return {
       'vars': [[varid, expfam] for (varid, expfam) in self.vars.items()],
       'randFuns': [{'argExpFams': aefs, 'resExpFam': ref} for (aefs, ref) in self.rand_funs],
-      'factors': [{'factor': facinfo, 'argVarIds': [a.id for a in args]} for (facinfo, args) in self.factors]
+      'factors': [{'factor': facinfo, 'argVarIds': [replace_id(a) for a in args]} for (facinfo, args) in self.factors]
     }
 
 """
@@ -142,10 +140,10 @@ class DoubleValue(object):
     return Double
 
   def freeze(self, varvals):
-    return varvals[self.varid.id]
+    return varvals[self.varid.id]['value']
 
 gaussian_exp_fam = {'type': 'gaussian'}
-bernoulli = {'type': 'bernoulli'}
+bernoulli_exp_fam = {'type': 'bernoulli'}
 def categorical_exp_fam(n):
   return {'type': 'categorical', 'n': n}
 
@@ -161,7 +159,7 @@ class DoubleClass(object):
     return DoubleValue(vars.dequeue())
 
   def unfreeze(self, state, value):
-    return DoubleValue(state.new_const_var('gaussian', value))
+    return DoubleValue(state.new_const_var(gaussian_exp_fam, value))
 
   def __repr__(self):
     return 'Double'
@@ -176,7 +174,7 @@ class BoolValue(object):
     return Bool
 
   def freeze(self, varvals):
-    return varvals[self.varid.id]
+    return varvals[self.varid.id]['value']
 
 class BoolClass(object):
 
@@ -190,7 +188,7 @@ class BoolClass(object):
     return BoolValue(vars.dequeue())
 
   def unfreeze(self, state, value):
-    return BoolValue(state.new_const_var('bernoulli', value))
+    return BoolValue(state.new_const_var(bernoulli_exp_fam, value))
 
   def __repr__(self):
     return 'Bool'
@@ -236,19 +234,15 @@ class Tuple(object):
 
 class CategoricalValue(object):
 
-  def __init__(self, varids):
-    self.varids = varids
+  def __init__(self, varid, n):
+    self.varid = varid
+    self.n = n
 
   def get_type(self):
-    return Categorical(len(self.varids) + 1)
+    return Categorical(self.n)
 
   def freeze(self, varvals):
-    i = 0
-    for varid in self.varids:
-      if varvals[varid.id]:
-        return i
-      i += 1
-    return i
+    return varvals[self.varid.id]['value']
 
 class Categorical(object):
 
@@ -256,19 +250,16 @@ class Categorical(object):
     self.n = n
 
   def exp_fams(self):
-    return ['bernoulli'] * (self.n - 1)
+    return [categorical_exp_fam(self.n)]
 
   def embedded_vars(self, value):
-    return value.varids
+    return [value.varid]
 
   def vars_to_value(self, vars):
-    varids = []
-    for i in range(self.n - 1):
-      varids.append(vars.dequeue())
-    return CategoricalValue(varids)
+    return CategoricalValue(vars.dequeue(), self.n)
 
   def unfreeze(self, state, value):
-    return CategoricalValue([state.new_const_var('bernoulli', value == i) for i in range(self.n - 1)])
+    return CategoricalValue(state.new_const_var(categorical_exp_fam(self.n), value), self.n)
 
   def __repr__(self):
     return 'Categorical(' + str(self.n) + ')'
@@ -308,15 +299,29 @@ def conditioned_network(state, typ, sampler, frozen_samps):
 
 def infer_parameters_from_samples(graph_state, samples, frozen_samples):
   for s,f in zip(samples, frozen_samples):
-    typ = get_type(s)
-    graph_state.unify_values(typ, s, typ.unfreeze(graph_state, f))
+    typ = get_type(s[1])
+    graph_state.unify_values(typ, s[1], typ.unfreeze(graph_state, f))
   templ = graph_state.to_JSON()
   (state, params) = hs_init_em(templ)
   state_params_list = [(state, params)]
   for i in range(10):
+    print 'iter', i
     (state, params) = hs_step_em(templ, state, params)
     state_params_list.append((state, params))
   return state_params_list
+
+def translate_params_for_fn(params):
+  if len(params[1][0]) == 0:
+    probs = [math.exp(x) for x in [0.0] + params[0]]
+    sum_probs = sum(probs)
+    return [p/sum_probs for p in probs]
+  else:
+    variance = -1.0 / (2 * params[0][1])
+    factors = [params[0][0]] + params[1][0]
+    return (variance, [f*variance for f in factors])
+
+def translate_params(params):
+  return [(x, translate_params_for_fn(y)) for (x, y) in params]
 
 def run_example(sampler):
   n = 1000
@@ -324,7 +329,9 @@ def run_example(sampler):
   templ = current_graph_state.to_JSON()
   rand_params = hs_rand_template_params(templ)
   varvals = state_to_varvals(hs_sample_bayes_net(templ, rand_params))
+  # TODO freeze only second value
   frozen_samples = [freeze_value(samp, varvals) for samp in samples]
-  state_params_list = infer_parameters_from_samples(current_graph_state, samples, frozen_samples)
-  print rand_params
-  print state_params_list[-1][1]
+  state_params_list = infer_parameters_from_samples(current_graph_state, samples, [x[1] for x in frozen_samples])
+  print translate_params(rand_params)
+  print translate_params(state_params_list[-1][1])
+  print str(state_params_list[-2][0]) == str(state_params_list[-1][0])

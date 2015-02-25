@@ -151,7 +151,7 @@ data FactorGraphTemplate v = FactorGraphTemplate {
 } deriving Show
 
 makeFactorGraphTemplate :: [(VarId, ExpFam v)] -> [(RandFunId, ExpFam v, [ExpFam v])] -> [(FactorId, Either (Factor v) RandFunId, [VarId])] -> FactorGraphTemplate v
-makeFactorGraphTemplate vars randfuns factors = traceShow (vars, fgv) $ FactorGraphTemplate (Map.fromList fgv) (Map.fromList fgrf) (Map.fromList fgf)
+makeFactorGraphTemplate vars randfuns factors = FactorGraphTemplate (Map.fromList fgv) (Map.fromList fgrf) (Map.fromList fgf)
   where fgv = [(varid, (ef, [factorid | (factorid, _, vars) <- factors, elem varid vars])) | (varid, ef) <- vars]
         fgrf = [(rfid, (ef, featureEfs, [factorid | (factorid, Right rfid', _) <- factors, rfid' == rfid])) | (rfid, ef, featureEfs) <- randfuns]
         fgf = [(factorid, (fac, vars)) | (factorid, fac, vars) <- factors]

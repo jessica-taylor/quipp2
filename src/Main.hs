@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 module Main where
 
+import Debug.Trace (trace, traceShow)
 import Control.Monad (liftM)
 import Control.Applicative ((<$>), (<*>))
 import Data.Map (Map, (!))
@@ -21,13 +22,15 @@ import Quipp.Vmp
 zip1_2 :: [a] -> [(b, c)] -> [(a, b, c)]
 zip1_2 xs yzs = zipWith (\x (y, z) -> (x, y, z)) xs yzs
 
-decodeExpFam :: String -> ExpFam Value
-decodeExpFam "gaussian" = gaussianValueExpFam
-decodeExpFam "bernoulli" = boolValueExpFam
+decodeExpFam :: JSON.JSValue -> ExpFam Value
+decodeExpFam ef = case ef !: "type" of
+  "gaussian" -> gaussianValueExpFam
+  "bernoulli" -> boolValueExpFam
+  "categorical" -> categoricalValueExpFam (ef !: "n")
 
 getResult :: JSON.Result a -> a
 getResult (JSON.Ok a) = a
-getResult (JSON.Error str) = error str
+getResult (JSON.Error str) = error $ "Error decoding: " ++ str
 
 decodeJSON :: JSON.JSON a => String -> a
 decodeJSON = getResult . JSON.decode
@@ -36,7 +39,10 @@ infixl 9 !:
 (!:) :: JSON.JSON b => JSON.JSValue -> String -> b
 (JSON.JSObject obj) !: key = case Map.lookup key (Map.fromList (JSON.fromJSObject obj)) of
   Nothing -> error ("Key not found: " ++ key ++ " in " ++ show obj)
-  Just result -> getResult $ JSON.readJSON result
+  Just result -> case JSON.readJSON result of
+    JSON.Ok a -> a
+    JSON.Error str -> error $ "Error looking up " ++ key ++ " in " ++ show obj ++ ": " ++ str
+other !: key = error ("Not object: " ++ show other)
 
 decodeTemplate :: String -> FactorGraphTemplate Value
 decodeTemplate str = makeFactorGraphTemplate
@@ -52,10 +58,12 @@ decodeTemplate str = makeFactorGraphTemplate
           let facinfo = fac !: "factor" in
           (case facinfo !: "type" of
              "randFun" -> Right (facinfo !: "id")
-             "constant" -> Left $ constFactor (decodeExpFam (facinfo !: "expFam")) $ case facinfo !: "expFam" of
+             "constant" -> Left $ constFactor (decodeExpFam (facinfo !: "expFam")) $ case facinfo !: "expFam" !: "type" of
                "gaussian" -> DoubleValue (facinfo !: "value")
-               "bernoulli" -> BoolValue (facinfo !: "value"),
-           fac !: "argVarIds")
+               "bernoulli" -> BoolValue (facinfo !: "value")
+               "categorical" -> CategoricalValue (facinfo !: "value")
+
+           , fac !: "argVarIds")
 
 decodeParams :: String -> FactorGraphParams
 decodeParams = decodeJSON
@@ -63,11 +71,18 @@ decodeParams = decodeJSON
 encodeParams :: FactorGraphParams -> String
 encodeParams = JSON.encode
 
+makeJSObject :: [(String, JSON.JSValue)] -> JSON.JSValue
+makeJSObject = JSON.JSObject . JSON.toJSObject
+
 instance JSON.JSON Value where
-  readJSON js@(JSON.JSRational _ _) = fmap DoubleValue $ JSON.readJSON js
-  readJSON js@(JSON.JSBool _) = fmap BoolValue $ JSON.readJSON js
-  showJSON (DoubleValue d) = JSON.showJSON d
-  showJSON (BoolValue b) = JSON.showJSON b
+  readJSON js = case js !: "type" of
+    "double" -> return $ DoubleValue (js !: "value")
+    "bool" -> return $ BoolValue (js !: "value")
+    "categorical" -> return $ CategoricalValue (js !: "value")
+  showJSON (DoubleValue d) = makeJSObject [("type", JSON.showJSON "double"), ("value", JSON.showJSON d)]
+  showJSON (BoolValue b) = makeJSObject [("type", JSON.showJSON "bool"), ("value", JSON.showJSON b)]
+  showJSON (CategoricalValue c) = makeJSObject [("type", JSON.showJSON "categorical"), ("value", JSON.showJSON c)]
+
 
 instance JSON.JSON (Likelihood Value) where
   readJSON x = case getResult $ JSON.readJSON x of
@@ -102,7 +117,7 @@ pyStepEM :: FactorGraphTemplate Value -> FST -> IO FST
 pyStepEM templ (state, params) = sampleRVar $ do
   let factorGraph = instantiateTemplate templ params
   newStates <- sampleRVarTWith (\(Just x) -> return x) $ iterateM 10 (stepMH factorGraph) state
-  params' <- updateTemplateParamsMH templ params [(1.0, s) | s <- takeEvery 1 (tail newStates)]
+  let params' = updateTemplateParams templ params [(1.0, s) | s <- takeEvery 1 (tail newStates)]
   return (last newStates, params')
 
 
@@ -133,7 +148,6 @@ main = do
     ["initEM", templateFile, stateFile, paramsFile] -> do
       templ <- readTemplate templateFile
       (state, params) <- pyInitEM templ
-      print stateFile
       writeState stateFile state
       writeParams paramsFile params
     ["stepEM", templateFile, stateFile, paramsFile] -> do

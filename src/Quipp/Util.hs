@@ -112,6 +112,12 @@ dotProduct x y = sum (zipWith (*) x y)
 matMulByVector :: Num a => Matrix a -> [a] -> [a]
 matMulByVector m v = map (dotProduct v) m
 
+matMul :: Num a => Matrix a -> Matrix a -> Matrix a
+matMul m1 m2 = map (matMulByVector m1) (transpose m2)
+
+matInv :: Matrix Double -> Matrix Double
+matInv = Mat.toLists . pinv . Mat.fromLists
+
 linSolve :: Matrix Double -> [Double] -> [Double]
 linSolve mat d =
   matMulByVector (Mat.toLists $ pinv $ Mat.fromLists mat) d
