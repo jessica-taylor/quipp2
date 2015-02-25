@@ -3,6 +3,7 @@
 \usepackage{amsfonts}
 \usepackage{multicol} \usepackage{fancyheadings} \usepackage{pdfpages}
 \setlength{\emergencystretch}{10em}
+\usepackage{proceed2}
 
 \newtheorem{theorem}{Theorem}[section]
 \newtheorem{lemma}[theorem]{Lemma}
@@ -36,7 +37,7 @@
     some family and infer parameters.
   \end{abstract}
 
-  \section{Introduction}
+  \section{INTRODUCTION}
 
   By separating model specification and inference, probabilistic programming 
   has made it easier for non-experts to implement and use probabilistic models.
@@ -97,13 +98,13 @@
   and present the expectation maximization algorithm used to learn them.
   We then demonstrate the expressiveness of our language, and the broad
   applicability of our algorithm, by writing some of the most common machine learning models
-  in Quipp: clustering, factor analysis, a Hidden Markov model, Latent Dirichlet Allocation, and
+  in Quipp: clustering, naive Bayes, factor analysis, a Hidden Markov model, Latent Dirichlet Allocation, and
   a neural net.
   
-  \section{Syntax}
+  \section{SYNTAX}
 
   Quipp is implemented as a Python library, so Quipp programs are written as Python programs that have access
-  to special functions.  Here is an example of a Quipp program to perform clustering:
+  to special functions.  Here is an example of a Quipp program to cluster 2d points into 3 clusters:
 
 
   \begin{verbatim}
@@ -125,70 +126,96 @@
   \texttt{Vector(2, Double)} expresses the fact that the points are 2-dimensional,
   and the type \texttt{Categorical(3)} expresses the fact that there are 3
   possible clusters (so a cluster may be either 0, 1, or 2).  We assume that
-  the disttribution over clusters is uniform, but we do not know the distribution
+  the distribution over clusters is uniform, but we do not know the distribution
   of points in each cluster.
   We will fill in the
-  \texttt{get\_point} function with a learned unknown linear function with noise.
+  \texttt{get\_point} function with a learned function that will take a random
+  sample from the given cluster.
 
-  \section{Class of Distributions}
-
-    For unknown functions, the class of random functions used is a kind
+  \section{FAMILY OF DISTRIBUTIONS}
+  
+  For unknown functions, the family of random functions used is a kind
     of generalized linear model.  We assume that the result
     is distributed from some exponential family whose natural
-    parameters are determined from the arguments.  We label
-    some subset of the sufficient statistics as \emph{features}.  The natural
+    parameters are determined from the arguments:
+
+    $$p_{\eta}(y | x) = \exp\left(\eta(x)^T \phi(y) - g(\eta(x))\right)$$
+
+    Here, $\eta$ is the natural parameter, $\phi(y)$ is a vector of $y$'s sufficient statistics,
+    and $g$ is the log partition function.
+
+    To determine $\eta$ as a function of $x$, we label
+    some subset of the sufficient statistics of both $x$ and $y$ as \emph{features}.  The natural
     parameters corresponding to non-features are constant, while natural
     parameters corresponding to features are determined as an affine
-    function of the features of the arguments.
+    function of the features of the arguments.  Features are the same as sufficient
+    statistics for the categorical distribution, but while both $X$ and $X^2$ are
+    sufficient statistics for the Gaussian distribution, only $X$ is a feature.
 
-    Let $\psi_x$ be a matrix such that $\psi \phi(x)$ is a vector x of the
-    features of $x$.  Then
+    Let $\psi(x)$ be the features of $x$.  Then
+    $$p_{\mathbf{N}}(y | x) = \exp\left(\begin{bmatrix} 1 \\ \psi(x) \end{bmatrix} ^T \mathbf{N} \phi(y) - g\left(\mathbf{N}^T \begin{bmatrix} 1 \\ \psi(x) \end{bmatrix}\right)\right)$$
 
-    $$p_{\mathbf{N}}(y | x) = \exp(\psi(x)^T N \phi(y) - g(N^T \psi(X)))$$
+    where $\mathbf{N}$ is a matrix containing our parameters.  It must have 0 for entries not in the first
+    row corresponding to sufficient statistics of $y$ that are not features.  This ensures that only the
+    natural parameters for features are affected by $x$.
 
     Given $(x, y)$ samples, parameter estimation to maximize log probability is a convex
-    problem:
+    problem because the log probability function is concave:
+    $$\log p_{\mathbf{N}}(y | x) = \begin{bmatrix} 1 \\ \psi(x) \end{bmatrix} ^T \mathbf{N} \phi(y) - g\left(\mathbf{N}^T \begin{bmatrix} 1 \\ \psi(x) \end{bmatrix}\right)$$
 
-    \begin{align*}
-      \log p_{\mathbf{N}}(y | x) = \psi(x)^T N \phi(y) - g(N^T \psi(X))
-    \end{align*}
-    since the log probability function is concave when $g$ is convex (as it is
-    for any exponential family distribution).
+    This relies on the fact that $g$ is convex, but this is true in general for any exponential family distribution.
+    Since the problem is convex, it is possible to use Newton's method to optimize the parameters.  Although
+    the only exponential family distributions we use in this paper are the categorical and Gaussian distributions,
+    we can use the same algorithms for other exponential families, such as the Poisson and gamma distributions.
 
-    Therefore, it is possible to use Newton's method to optimize the parameters.
+  \section{INFERENCE}
 
-  \section{Inference}
-
-    To perform inference of both latent variables and parameters, we first
+    To infer both latent variables and parameters, we first
     translate the program to a factor graph.  Next, we run the
     expectation maximization algorithm on this graph, iterating stages of
-    estimating latent variables using Metropolis Hastings and parameter
-    inference using Newton's method.
+    estimating latent variables using Metropolis Hastings and inferring
+    parameters using Newton's method.
 
     In the factor graph, there are 2 types of variables: real numbers
     and categorical values.
     In Quipp, we have an additonal tuple type, which gets translated
-    to multiple underlying variables in the factor graph.
+    to multiple underlying variables in the factor graph.  In the
+    clustering example, we would represent each point by 2 real number variables,
+    and each cluster assignment as a single categorical variable (with 3 alternatives).
 
-    There are a few different types of factors:
-    \begin{enumerate}
-      \item Factors representing known distributions
-      \item Factors representing unknown distribution
-      \item Factors asserting that a value is equal to some constant
-    \end{enumerate}
+    Factors can represent known distributions,
+    unknown distributions, or observations.
+    In the clustering example, we will have, for each cluster assignment variable,
+    a factor representing the fact that it comes from a (known) uniform distribution.
+    For each real number in a data point, we will have a factor connecting it to
+    the cluster assignment for the point, which will represent the unknown distribution.
+    This factor depends on the specific values of the parameters for the $\texttt{get\_point}$ function.
+    Also, since data points are observed, they will have constant factors attached to them
+    representing these observations.
+
+    \begin{figure}[h]
+    \begin{center}
+    \includegraphics[scale=0.2]{cluster_diagram.png}
+    \end{center}
+    \caption{Translating clustering model to factor graph.  TODO fix variable names} 
+    \end{figure} 
 
     How is inference in the factor graph performed?  We use the Metropolis Hastings
     algorithm, updating one node at a time.  To get a proposal for a given node,
     we approximate the local distribution using message passing (similar to
     in variational message passing).  Specifically, for each factor
     $f(x_1, x_2, ..., x_n)$ and each $1 \leq i \leq n$, we send a message
-    to variable $x_i$ that approximates $x_i \mapsto f(x_1, x_2, ..., x_n)$.
+    to variable $x_i$ that approximates $x_i \mapsto \log f(x_1, x_2, ..., x_n)$ as
+    an affine function as $\phi(x_i)$.  The proposal distribution is then the
+    product of these messages, which will approximate the local distribution of
+    the variable.
 
 
 
-  \section{Examples}
+  \section{EXAMPLES}
 
-  \subsection{Clustering}
+  \subsection{CLUSTERING}
+{\small
 \begin{verbatim}
 dim = 2
 nclusters = 3
@@ -203,17 +230,19 @@ def sample():
   cluster = get_cluster()
   return (cluster, get_point(cluster))
 \end{verbatim}
+}
 
 In this example, we cluster 2d points into 3 different clusters.  Given a cluster, the distribution for a point is some independent Gaussian distribution.  This is similar to fuzzy c-means clustering.
 
 We randomly generated parameters for this example 100 times, and each time took 100 samples and then ran 10 EM iterations.  The accuracy is defined as the maximum percentage of points assigned to the correct cluster, for any permutation of clusters.  On average, accuracy increased in each EM iteration, as shown it this graph:
 
 \begin{center}
-\includegraphics[scale=0.5]{cluster_accuracy.png}
+\includegraphics[scale=0.4]{cluster_accuracy.png}
 \end{center}
 
-\subsection{Naive Bayes}
+\subsection{NAIVE BAYES}
 
+{\small
 \begin{verbatim}
 nfeatures = 10
 FeaturesType = Vector(nfeatures, Bool)
@@ -231,6 +260,7 @@ def sample():
     features = class_2_features()
   return (which_class, features)
 \end{verbatim}
+}
 
 The naive Bayes model is similar to the clustering model.  We have two classes and a feature
 distribution for each.  Since each feature is boolean, we will learn
@@ -238,8 +268,8 @@ a different categorical distribution for each class.
 
 (figure should show average classification accuracy)
 
-  \subsection{Factor Analysis}
-
+  \subsection{FACTOR ANALYSIS}
+{\small
 \begin{verbatim}
 num_components = 3
 point_dim = 5
@@ -250,14 +280,17 @@ PointType = Vector(point_dim, Double)
 get_point = rand_function(ComponentsType, PointType)
 
 def sample():
-  components = [normal(0, 1) for i in range(num_components)]
+  components = [normal(0, 1)
+                for i in range(num_components)]
   return (comenents, get_point(components))
 \end{verbatim}
+}
 
 The factor analysis model is very similar to the clustering model.  The main difference is that we replace the categorical \texttt{ClusterType} type with a vector type.  This results in the model attempting to find each point as an affine function of a vector of standard normal values.
 
 (figure should show accuracy by EM iteration.  Accuracy can be measured by distances between different factor coefficients, when ordered according to some permutation)
-  \subsection{Hidden Markov model}
+  \subsection{HIDDEN MARKOV MODEL}
+{\small
 \begin{verbatim}
 num_states = 5
 num_observations = 3
@@ -275,12 +308,13 @@ def sample():
     states.append(trans_fun(states[-1]))
   return (states, [obs_fun(s) for s in states])
 \end{verbatim}
+}
 
 In this example, we use the unknown function \texttt{trans\_fun} for state transitions and \texttt{obs\_fun} for observations.  This means that we will learn both the state transitions and the observation distribution.
 
 
-\subsection{Latent Dirichlet Allocation}
-
+\subsection{LATENT DIRICHLET ALLOCATION}
+{\small
 \begin{verbatim}
 n_classes = 10
 n_words = 100
@@ -293,16 +327,19 @@ class_to_word = rand_function(ClassType, WordType)
 
 def sample():
     which_class = uniform_categorical(n_classes)
-    words = [class_to_word(which_class) for i in range(n_words_per_document)]
+    words = [class_to_word(which_class)
+             for i in range(n_words_per_document)]
     return (which_class, words)
 \end{verbatim}
+}
 
 In this example, we use the unknown function \texttt{class\_to\_word} to map classes to word distributions.  Note that each column of the matrix of parameters for \texttt{class\_to\_word} will represent a categorical distribution over words, and there will be one column for each class.
 
 (figure should show accuracy over time.  Accuracy can be measured as distance between the learned categorical distributions, for some permutation of classes)
 
-\subsection{Neural Network}
+\subsection{NEURAL NETWORK}
 
+{\small
 \begin{verbatim}
 input_dim = 100
 hidden_dim = 20
@@ -320,19 +357,18 @@ def sample(input_layer):
   output_layer = hidden_to_output(hidden_layer)
   return ((), output_layer)
 \end{verbatim}
+}
 
-\subsection{A more complex model}
+\subsection{A MORE COMPLEX MODEL}
 
-TODO: come up with a more complex model.  Show how this model can be iteratively improved by adding information.  It would make sense for this to be some sort of data science type  
+TODO: if there is time, we should put a more complex data science type example, where we add dependencies and show change in accuracy as we add/remove assumptions.
 
 
+  \section{DISCUSSION}
 
-  \section{Discussion}
-
-  - Comments about results
-  - Future directions
-    - Unbounded models
-    - Recursive algebraic data types
+  We have found that it is possible to write many useful machine learning models as Quipp programs and then use generic algorithms for inference.  Furthermore, performance is <???>.  This should make it much easier for non-experts to write useful machine learning models.
+  
+  In the future, it will be useful to support unbounded recursion in models (as in Church).  Furthermore, it will also be useful to expand the set of types supported.  It is possible to define reasonable default distributions for non-recursive algebraic data types, and it may also be possible to define them for recursive algebraic data types using catamorphisms.
 
 
 \end{document}
