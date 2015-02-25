@@ -38,29 +38,36 @@
 
   \section{Introduction}
 
-  Probabilistic programming languages have made it easier to specify Bayesian
-  models as programs.  Once a model is written as a probabilistic
-  program, it is possible to use generic inference algorithms (such as
-  Metropolis Hastings) to perform inference.
+  By separating model specification and inference, probabilistic programming 
+  has made it easier for non-experts to implement and use probabilistic models.
+  Practitioners frequently have strong intuitions about the {\em structure}
+  of their domain knowledge, such as which latent variables exist and what
+  their causal relations are, and probabilistic programming allows them to encode
+  this knowledge. However, it also requires them to specify the specific parametric
+  shape  and parameterization of any distributions used, and intuitions tend to
+  be much less precise there.
+  We present Quipp, a system that does {\em not} require such specification;
+  instead, random variables and random functions can be left undefined
+  and will automatically be filled in under maximum entropy assumptions
+  based on their types and available datasets.
+  
+  Our formalism can concisely express a wide variety of models that machine
+  learning practitioners care about, and we provide an expectation
+  maximization algorithm that can learn the parameters for many of
+  these models with reasonable efficiency. This system makes it easy
+  for non-experts to encode their beliefs about the data and to get
+  predictions based on as few additional assumptions as possible.
+  
+  % This feature has multiple advantages.  First, it is easier to write
+  % models without knowing about the class of models being used.  This should
+  % make probabliistic programming more accessible to non-experts.  Secondly,
+  % parameter inference is more efficient if specialized algorithms are used
+  % rather than the generic algorithms used to infer other random variables
+  % (such as Metropolis Hastings).
 
-  In this paper, we discuss a feature of probabilistic programming languages
-  that makes it easier to specify some models.
-  Specifically, we allow the programmer to specify that some random functions
-  are unknown.  The system will fill in these unknown functions with
-  some reasonable default family of distributions based on the types and
-  proceed to infer the parameters to this distribution using the
-  expectation maximization algorithm.
-
-  This feature has multiple advantages.  First, it is easier to write
-  models without knowing about the class of models being used.  This should
-  make probabliistic programming more accessible to non-experts.  Secondly,
-  parameter inference is more efficient if specialized algorithms are used
-  rather than the generic algorithms used to infer other random variables
-  (such as Metropolis Hastings).
-
-  We define an example probabilistic programming language with this feature
-  (Quipp) and show how it can be used to write machine learning models
-  concisely.
+  % We define an example probabilistic programming language with this feature
+  % (Quipp) and show how it can be used to write machine learning models
+  % concisely.
 
   In an ordinary probabilistic programming language (such as Church),
   it would be possible to treat parameters as random variables.  This
@@ -72,19 +79,27 @@
   Second, specialized algorithms can be used to make parameter inference
   faster.
 
-  Inference in these models is performed using the expectation-maximization
-  algorithm, with alternating steps of inferring latent variables and optimizing
-  parameters.
+  % Inference in these models is performed using the expectation-maximization
+  % algorithm, with alternating steps of inferring latent variables and optimizing
+  % parameters.
 
+  % - Motivation for Quipp
+  %   - Explanation of "unknown functions"
+  %   - Writing machine learning algorithms as probabilistic programs
+  %   - Accessibility to non-experts
+  %   - Comparison to existing probabilistic programming languages
+  %     - In other languages, use random variables for parameters
+  %     - Random variables slower because they are updated independently
 
-  - Motivation for Quipp
-    - Explanation of "unknown functions"
-    - Writing machine learning algorithms as probabilistic programs
-    - Accessibility to non-experts
-    - Comparison to existing probabilistic programming languages
-      - In other languages, use random variables for parameters
-      - Random variables slower because they are updated independently
-
+  In the following, we first specify the syntax used to write Quipp programs,
+  including the notation for unknown variables and functions.
+  We describe the class of exponential family variables and functions that our system can learn,
+  and present the expectation maximization algorithm used to learn them.
+  We then demonstrate the expressiveness of our language, and the broad
+  applicability of our algorithm, by writing some of the most common machine learning models
+  in Quipp: clustering, factor analysis, a Hidden Markov model, Latent Dirichlet Allocation, and
+  a neural net.
+  
   \section{Syntax}
 
   Quipp is implemented as a Python library, so Quipp programs are written as Python programs that have access
@@ -124,7 +139,7 @@
     parameters corresponding to features are determined as an affine
     function of the features of the arguments.
 
-    Let $\psi_x$ be a matrix such that $\psi \phi(x)$ is a vector of the
+    Let $\psi_x$ be a matrix such that $\psi \phi(x)$ is a vector x of the
     features of $x$.  Then
 
     $$p_{\mathbf{N}}(y | x) = \exp(\psi(x)^T N \phi(y) - g(N^T \psi(X)))$$
