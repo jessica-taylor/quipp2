@@ -61,10 +61,15 @@ decodeTemplate str = makeFactorGraphTemplate
              "uniformCategorical" ->
                let n = facinfo !: "n" in
                Left $ expFamFactor (categoricalValueExpFam n) [] (replicate (n - 1) 0.0, replicate (n-1) [])
+             "normal" ->
+               let mean = facinfo !: "mean"
+                   stdev = facinfo !: "stdev"
+              in Left $ expFamFactor gaussianValueExpFam [] ([mean / stdev^2, -1 / (2 * stdev^2)], [[]])
              "constant" -> Left $ constFactor (decodeExpFam (facinfo !: "expFam")) $ case facinfo !: "expFam" !: "type" of
                "gaussian" -> DoubleValue (facinfo !: "value")
                "bernoulli" -> BoolValue (facinfo !: "value")
                "categorical" -> CategoricalValue (facinfo !: "value")
+             other -> error $ "Unknown factor type: " ++ other
 
            , fac !: "argVarIds")
 

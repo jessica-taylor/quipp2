@@ -323,3 +323,80 @@ type is a type
 what about type inference?
 - might have to sacrifice this :(
 dynamically typed?
+-----------------------------
+
+suppose x, y ~ N(0, 1)
+
+ax ~ N(0, a a^T)
+
+ax + by ~ N(0, a a^T + b b^T)
+
+problem:
+
+E = [1, 0; 0, 2]
+
+a = [1, 1]
+b = [-1/2, 2]
+
+-> [1.25, 0; 0, 5]
+
+E[(Vf)^T M Vf]
+= E[f^T V^T M V F]
+= E[f^T V^T R^T M R V f]
+
+Rxx^TR^T
+
+VRf = Vf
+
+VR = rotate each row of V (incl. exchange columns with each other)
+
+columns of V = things multiplied by factors
+rows of V = ways of getting components out
+rows of V = per-factor loadings for each component
+
+want:
+min_R ||RA - B||^2
+= min_R tr((RA - B)^T(RA - B))
+= min_R tr(A^T R^T R A - B^T R A - A^ T R^T B + B^T B)
+= min_R tr(A^T A - B^T R A - A^ T R^T B + B^T B)
+= ||A||^2 + ||B||^2 - 2 max_R tr(B^T R A)
+= ||A||^2 + ||B||^2 - 2 max_R tr(R A B^T)
+= ||A||^2 + ||B||^2 - 2 max_R sum_i sum_k R_{i,k} (AB^T)_{k,i}
+
+= ||A||^2 + ||B||^2 - 2 max_R tr(B^T R A)
+
+want R^T to look like AB^T
+
+= ||A||^2 + ||B||^2 - 2 max_R tr(B^T R A)
+
+A = usv^T,
+B = USV^T
+tr(B^T R A) =
+tr(VSU^T R usv^T
+
+tr(VSRsv^T)
+
+
+
+
+min_R ||AR - B||^2
+= min_R tr((AR - B)^T(AR - B))
+= min_R tr(R^TA^T A R - B^T A R - R^T A^T B + B^T B)
+= ||A||^2 + ||B||^2 - 2 max_R tr(R^T A^T B)
+
+A^T B = USV^T
+
+= ||A||^2 + ||B||^2 - 2 max_R tr(R^T USV^T)
+= ||A||^2 + ||B||^2 - 2 max_R tr(V^T R^T US)
+= ||A||^2 + ||B||^2 - 2 max_R tr(S)
+-> R = UV^T
+
+
+
+
+= min_R tr(A^T A - B^T R A - A^ T R^T B + B^T B)
+= ||A||^2 + ||B||^2 - 2 max_R tr(B^T R A)
+= ||A||^2 + ||B||^2 - 2 max_R tr(R A B^T)
+= ||A||^2 + ||B||^2 - 2 max_R tr(R A^T B)
+
+AB^T

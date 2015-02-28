@@ -9,8 +9,8 @@ def run():
   get_point = rand_function(ClusterType, PointType)
 
   def sample():
-    cluster = UniformCategorical(nclusters)
+    cluster = uniform_categorical(nclusters)
     return (cluster, get_point(cluster))
   return sample
 
-run_example(run)
+run_clustering_example(run)

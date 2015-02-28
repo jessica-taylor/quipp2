@@ -1,4 +1,6 @@
 import math
+import numpy as np
+from numpy import linalg
 import itertools
 from callhaskell import *
 
@@ -268,7 +270,7 @@ class Categorical(object):
 def get_type(value):
   if hasattr(value, 'get_type'):
     return value.get_type()
-  elif isinstance(value, tuple):
+  elif isinstance(value, (tuple, list)):
     return Tuple(*map(get_type, value))
   else:
     raise Exception('Unknown value type ' + str(type(value)) + ', value ' + str(value))
@@ -276,12 +278,13 @@ def get_type(value):
 def freeze_value(value, varvals):
   if hasattr(value, 'freeze'):
     return value.freeze(varvals)
-  elif isinstance(value, tuple):
+  elif isinstance(value, (tuple, list)):
     return tuple([freeze_value(v, varvals) for v in value])
   else:
     raise Exception('Unknown value type ' + str(type(value)) + ', value ' + str(value))
 
 def Vector(n, typ):
+  print 'vector', n, typ, Tuple(*([typ]*n))
   return Tuple(*([typ]*n))
 
 Unit = Tuple()
@@ -291,10 +294,16 @@ current_graph_state = GraphState()
 def rand_function(*ts):
   return current_graph_state.rand_function(ts[:-1], ts[-1])
 
-def UniformCategorical(n):
+def uniform_categorical(n):
   v = current_graph_state.new_var(categorical_exp_fam(n))
   current_graph_state.new_factor({'type': 'uniformCategorical', 'n': n}, [v])
   return CategoricalValue(v, n)
+
+def normal(mean, stdev):
+  v = current_graph_state.new_var(gaussian_exp_fam)
+  current_graph_state.new_factor({'type': 'normal', 'mean': mean, 'stdev': stdev}, [v])
+  return DoubleValue(v)
+
 
 def conditioned_network(state, typ, sampler, frozen_samps):
   samples = [sampler() for i in range(len(samps))]
@@ -309,12 +318,11 @@ def infer_parameters_from_samples(graph_state, samples, frozen_samples):
     graph_state.unify_values(typ, s[1], typ.unfreeze(graph_state, f))
   templ = graph_state.to_JSON()
   (state, params) = hs_init_em(templ)
-  state_params_list = [(state, params)]
+  yield (state, params)
   for i in range(10):
     print 'iter', i
     (state, params) = hs_step_em(templ, state, params)
-    state_params_list.append((state, params))
-  return state_params_list
+    yield (state, params)
 
 def translate_params_for_fn(params):
   if len(params[1][0]) == 0:
@@ -361,7 +369,7 @@ def translate_params(params):
 def mean(xs):
   return sum(xs) / len(xs)
 
-def run_example(run):
+def run_clustering_example(run):
   global current_graph_state
   n = 100
   accs = []
@@ -389,3 +397,81 @@ def run_example(run):
       j += 1
     accs.append(iter_accs)
   print map(mean, zip(*accs))
+
+
+def params_to_matrix(params):
+  coords = []
+  for (i, ((base_n1, n2), (lin,))) in params:
+    coords.append([-l/(2 * n2) for l in [base_n1] + lin])
+  return np.matrix(coords)
+
+def matrix_to_gaussian(mat):
+  mean = mat[:,0]
+  a = mat[:, 1:]
+  return (mean, a * a.T)
+
+def gaussian_kl(p, q):
+  (pm, pv) = p
+  (qm, qv) = q
+  n = pm.shape[0]
+  assert pv.shape[0] == n == qv.shape[0]
+  return 0.5 * (np.trace(linalg.inv(qv) * pv) + (qm - pm).T * linalg.inv(pv) * (qm - pm) - n + np.slogdet(qv)[1] - np.slogdet(pv)[1])
+
+def rotation_invariant_dist(A, B):
+  # min_R ||AR - B||^2
+  # = min_R tr((AR - B)^T(AR - B))
+  # = min_R tr(R^TA^T A R - B^T A R - R^T A^T B + B^T B)
+  # = ||A||^2 + ||B||^2 - 2 max_R tr(R^T A^T B)
+  #
+  # A^T B = USV^T
+  #
+  # = ||A||^2 + ||B||^2 - 2 max_R tr(R^T USV^T)
+  # = ||A||^2 + ||B||^2 - 2 max_R tr(V^T R^T US)
+  # = ||A||^2 + ||B||^2 - 2 max_R tr(S)
+  # -> R = UV^T
+
+  u, s, v = linalg.svd(A.T * B)
+  r = u * v
+  # print linalg.norm(A*r - B)**2
+  return (r, linalg.norm(A)**2 + linalg.norm(B)**2 - 2 * sum(s))
+  
+
+# IDEA: compute Gaussian from factors, KL divergence!
+
+def run_example(run):
+  global current_graph_state
+  n = 100
+  accs = []
+  for i in range(1):
+    current_graph_state = GraphState()
+    sampler = run()
+    samples = [sampler() for i in range(n)]
+    templ = current_graph_state.to_JSON()
+    rand_params = hs_rand_template_params(templ)
+    rand_mat = params_to_matrix(rand_params)
+    print rand_mat
+    print rotation_invariant_dist(rand_mat, rand_mat)
+    varvals = state_to_varvals(hs_sample_bayes_net(templ, rand_params))
+    frozen_samples = [freeze_value(samp, varvals) for samp in samples]
+    true_latents = [x[0] for x in frozen_samples]
+    # print true_latents
+    state_params_list = infer_parameters_from_samples(current_graph_state, samples, [x[1] for x in frozen_samples])
+    # rand_cs = params_to_cluster_centers(rand_params)
+    iter_accs = []
+    j = 0
+    for (state, params) in state_params_list:
+      guess_mat = params_to_matrix(params)
+      r, dist = rotation_invariant_dist(guess_mat, rand_mat)
+      print dist
+      print guess_mat * r
+      # cs = params_to_cluster_centers(params)
+      if j > 1:
+        print gaussian_kl(matrix_to_gaussian(rand_mat), matrix_to_gaussian(guess_mat))
+        varvals = state_to_varvals(state)
+        state_latents = [freeze_value(samp[0], varvals) for samp in samples]
+        # acc = cluster_assignment_accuracy(true_latents, state_latents)
+        # iter_accs.append(acc)
+      j += 1
+
+    # accs.append(iter_accs)
+  # print map(mean, zip(*accs))

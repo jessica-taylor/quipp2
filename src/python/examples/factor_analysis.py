@@ -1,15 +1,18 @@
 from quipp import *
 
-num_components = 3
-point_dim = 5
+def run():
+  num_components = 2
+  point_dim = 5
 
-ComponentsType = Vector(num_components, Double)
-PointType = Vector(point_dim, Double)
+  ComponentsType = Vector(num_components, Double)
+  PointType = Vector(point_dim, Double)
 
-get_point = randFunction(ComponentsType, PointType)
+  get_point = rand_function(ComponentsType, PointType)
 
-def sample():
-  components = [normal(0, 1) for i in range(num_components)]
-  return (comenents, get_point(components))
+  def sample():
+    components = [normal(0, 1) for i in range(num_components)]
+    return (components, get_point(components))
 
-run_example(sample)
+  return sample
+
+run_example(run)
