@@ -141,6 +141,20 @@ groupSamplesByFeatures samps =
   in [(totWeight, snd3 (head g), map sum $ transpose [scaleVec (w / totWeight) s | (w, _, s) <- g])
       | g <- grouped, let totWeight = sum $ map fst3 g]
 
+sampleVariances :: [(Double, [Double], [Double])] -> ([Double], [Double])
+sampleVariances xs = (var snd3, var thd3)
+  where totWeight = sum (map fst3 xs)
+        minVar = 0.00001
+        -- normalize handles NaN too
+        normalize x = if x >= minVar then x else minVar
+        var f = map normalize $ zipWith (-) (map (^2) (ev f id)) (ev f (^2))
+        ev f g = foldl1 (zipWith (+)) [scaleVec (fst3 x / totWeight) (map g $ f x) | x <- xs]
+
+-- normalize entry for feature a, suf stat b, by stdev(b) / stdev(a)
+-- that is, regularization factor is proportional to stdev(a) / stdev(b)
+  
+  
+
 -- Special case for Gaussian (linear regression).  I have confirmed that
 -- this is equivalent.  Note that this does not work for VMP or for
 -- samples with weight not equal to 1.
@@ -157,9 +171,12 @@ expFamMLE fam samples etaStart | expFamName fam == "gaussian" =
 
 expFamMLE fam samples etaStart = -- trace ("\nexpFamMLE " ++ show samples) $
   let samples' = groupSamplesByFeatures samples
+      (xvars, yvars) = sampleVariances samples
       f :: RealFloat m => [m] -> m
-      f eta = sum [fromDouble weight * expFamLogProbability fam params (map fromDouble exs) (map fromDouble ys) | (weight, exs, {- varxs, -} ys) <- samples']
+      f eta = -baseReg (fst params) - featReg (snd params) + sum [fromDouble weight * expFamLogProbability fam params (map fromDouble exs) (map fromDouble ys) | (weight, exs, {- varxs, -} ys) <- samples']
         where params = vectorToParams fam eta
+              baseReg ns = squareMagnitude $ zipWith (/) ns (map (fromDouble . sqrt) yvars)
+              featReg ns = squareMagnitude $ zipWith (*) (concat ns) [sqrt (fromDouble xv / fromDouble yv) | yv <- expFamSufStatToFeatures fam yvars, xv <- xvars]
   in map (vectorToParams fam) $ newtonMethod (\eta -> (f eta, grad f eta, hessian f eta)) $ paramsToVector etaStart
 
 expFamMH :: ExpFam a -> [(Double, [Double], [Double])] -> Params Double -> RVar [Params Double]

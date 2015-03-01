@@ -109,6 +109,9 @@ transpose xs = if maximum (map length xs) == 0 then [] else map head xs : transp
 dotProduct :: Num a => [a] -> [a] -> a
 dotProduct x y = sum (zipWith (*) x y)
 
+squareMagnitude :: Num a => [a] -> a
+squareMagnitude x = dotProduct x x
+
 matMulByVector :: Num a => Matrix a -> [a] -> [a]
 matMulByVector m v = map (dotProduct v) m
 

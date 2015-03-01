@@ -420,3 +420,28 @@ f(y) = by^2/2 + cx
 f'(y) = by + c
 f'(x) = bx + c = a
 c = a - bx
+
+----------
+
+regularization!
+
+for categorical: start with maxent.
+
+how to get laplace's rule of succession automatically?
+problem: harder when we have features...
+- normalize based on variance of features?
+
+for linreg: what is maxent?
+
+(mean, variance) -> P(x | mean, variance)
+
+-------
+
+HMM symmetry?
+
+given transition matrix and observation matrix:
+can freely swap stetes with each other if consistent
+no other symmetries?
+  - would require it to be _impossible_ to determine states and observation
+    distributions given infinite data
+therefore...compute best permutation?

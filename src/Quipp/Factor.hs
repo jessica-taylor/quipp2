@@ -17,7 +17,7 @@ import Control.Monad (liftM, replicateM)
 import Control.Monad.State.Class (get, put)
 import Control.Monad.State.Lazy (evalState)
 import Debug.Trace
-import Data.List (elemIndex)
+import Data.List (elemIndex, isPrefixOf)
 import Data.Map (Map, (!))
 import qualified Data.Map as Map
 import Data.Maybe (fromJust)
@@ -76,7 +76,8 @@ getFeatureMessage (expFamName -> "gaussian") f [x] = [d - d2 * x, d2 / 2]
   where f' = f . (:[])
         d = diff f' x
         d2 = diff (diff f') x
-getFeatureMessage (expFamName -> "categorical") f x = grad f x
+getFeatureMessage ef f x | "categorical" `isPrefixOf` expFamName ef = grad f x
+getFeatureMessage ef f x = error $ "Bad expfam and features: " ++ expFamName ef ++ ", " ++ show x
 
 -- TODO: something is fishy here.  Things get flipped when they shouldn't.
 expFamFactor :: ExpFam v -> [ExpFam v] -> Params Double -> Factor v

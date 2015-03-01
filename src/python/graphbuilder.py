@@ -381,6 +381,7 @@ def run_clustering_example(run):
     samples = [sampler() for i in range(n)]
     templ = current_graph_state.to_JSON()
     rand_params = hs_rand_template_params(templ)
+    print hs_sample_bayes_net(templ, rand_params)
     varvals = state_to_varvals(hs_sample_bayes_net(templ, rand_params))
     frozen_samples = [freeze_value(samp, varvals) for samp in samples]
     true_latents = [x[0] for x in frozen_samples]
@@ -479,6 +480,40 @@ def run_factor_analysis_example(run):
         prev_state_latents = state_latents
         # acc = cluster_assignment_accuracy(true_latents, state_latents)
         # iter_accs.append(acc)
+      j += 1
+
+    # accs.append(iter_accs)
+  # print map(mean, zip(*accs))
+
+def run_hmm_example(run):
+  global current_graph_state
+  n = 100
+  accs = []
+  for i in range(1):
+    current_graph_state = GraphState()
+    sampler = run()
+    samples = [sampler() for i in range(n)]
+    templ = current_graph_state.to_JSON()
+    rand_params = hs_rand_template_params(templ)
+    print rand_params
+    # rand_mat = params_to_matrix(rand_params)
+    varvals = state_to_varvals(hs_sample_bayes_net(templ, rand_params))
+    frozen_samples = [freeze_value(samp, varvals) for samp in samples]
+    true_latents = [x[0] for x in frozen_samples]
+    # print true_latents
+    state_params_list = infer_parameters_from_samples(current_graph_state, samples, [x[1] for x in frozen_samples])
+    # rand_cs = params_to_cluster_centers(rand_params)
+    iter_accs = []
+    j = 0
+    prev_state_latents = None
+    for (state, params) in state_params_list:
+      # guess_mat = params_to_matrix(params)
+      # cs = params_to_cluster_centers(params)
+      if j > 1:
+        print params
+        varvals = state_to_varvals(state)
+        state_latents = [freeze_value(samp[0], varvals) for samp in samples]
+        prev_state_latents = state_latents
       j += 1
 
     # accs.append(iter_accs)
