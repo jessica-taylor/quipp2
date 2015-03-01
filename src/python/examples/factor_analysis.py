@@ -15,4 +15,4 @@ def run():
 
   return sample
 
-run_example(run)
+run_factor_analysis_example(run)

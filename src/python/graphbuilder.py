@@ -443,7 +443,7 @@ def rotation_invariant_dist(A, B):
 
 # IDEA: compute Gaussian from factors, KL divergence!
 
-def run_example(run):
+def run_factor_analysis_example(run):
   global current_graph_state
   n = 200
   accs = []
