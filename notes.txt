@@ -400,3 +400,23 @@ A^T B = USV^T
 = ||A||^2 + ||B||^2 - 2 max_R tr(R A^T B)
 
 AB^T
+
+-----
+
+linear approx f(x, y) 
+could take gradient at x...
+but, what if we have
+
+_/\___
+_______/\
+
+if point in middle of likelihood, we will just be sampling from prior!
+
+quadric approximation:
+
+f'(x) = a
+f''(x) = b
+f(y) = by^2/2 + cx
+f'(y) = by + c
+f'(x) = bx + c = a
+c = a - bx

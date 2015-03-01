@@ -4,7 +4,7 @@ module Quipp.ExpFam (ExpFam(ExpFam, expFamName, expFamD, expFamSufStat, expFamG,
                      expFamFeaturesD, expFamSufStatToFeatures, expFamFeaturesToSufStat,
                      expFamSufStatToLikelihood, expFamCrossEntropy,
                      getNatParam,
-                     Params,
+                     Params, mapParams,
                      promoteExpFam, expFamLogProbability, expFamMLE, expFamMH,
                      Likelihood(KnownValue, NatParam), promoteLikelihood, negInfinity,
                      likelihoodLogProbability,
@@ -115,6 +115,8 @@ mhNewtonMethod f x = iterateRVar (mhNewtonMethodStep f) x
 ratNum = (fromRational :: Rational -> Double) . toRational
 
 type Params m = ([m], Matrix m)
+
+mapParams f (xs, ys) = (map f xs, map (map f) ys)
 
 paramsToVector :: Params m -> [m]
 paramsToVector (base, weights) = base ++ concat weights

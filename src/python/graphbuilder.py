@@ -319,10 +319,12 @@ def infer_parameters_from_samples(graph_state, samples, frozen_samples):
   templ = graph_state.to_JSON()
   (state, params) = hs_init_em(templ)
   yield (state, params)
-  for i in range(10):
+  i = 0
+  while True:
     print 'iter', i
     (state, params) = hs_step_em(templ, state, params)
     yield (state, params)
+    i += 1
 
 def translate_params_for_fn(params):
   if len(params[1][0]) == 0:
@@ -401,21 +403,24 @@ def run_clustering_example(run):
 
 def params_to_matrix(params):
   coords = []
+  component_variances = []
   for (i, ((base_n1, n2), (lin,))) in params:
+    component_variances.append(-1.0 / (2 * n2))
     coords.append([-l/(2 * n2) for l in [base_n1] + lin])
-  return np.matrix(coords)
+  return component_variances, np.matrix(coords)
 
-def matrix_to_gaussian(mat):
+def matrix_to_gaussian(variances_mat):
+  variances, mat = variances_mat
   mean = mat[:,0]
   a = mat[:, 1:]
-  return (mean, a * a.T)
+  return (mean, a * a.T + np.diag(variances))
 
 def gaussian_kl(p, q):
   (pm, pv) = p
   (qm, qv) = q
   n = pm.shape[0]
   assert pv.shape[0] == n == qv.shape[0]
-  return 0.5 * (np.trace(linalg.inv(qv) * pv) + (qm - pm).T * linalg.inv(pv) * (qm - pm) - n + np.slogdet(qv)[1] - np.slogdet(pv)[1])
+  return 0.5 * (np.trace(linalg.inv(qv) * pv) + ((qm - pm).T * linalg.inv(qv) * (qm - pm)).item((0,0)) - n + linalg.slogdet(qv)[1] - linalg.slogdet(pv)[1])
 
 def rotation_invariant_dist(A, B):
   # min_R ||AR - B||^2
@@ -440,7 +445,7 @@ def rotation_invariant_dist(A, B):
 
 def run_example(run):
   global current_graph_state
-  n = 100
+  n = 200
   accs = []
   for i in range(1):
     current_graph_state = GraphState()
@@ -450,7 +455,6 @@ def run_example(run):
     rand_params = hs_rand_template_params(templ)
     rand_mat = params_to_matrix(rand_params)
     print rand_mat
-    print rotation_invariant_dist(rand_mat, rand_mat)
     varvals = state_to_varvals(hs_sample_bayes_net(templ, rand_params))
     frozen_samples = [freeze_value(samp, varvals) for samp in samples]
     true_latents = [x[0] for x in frozen_samples]
@@ -459,16 +463,20 @@ def run_example(run):
     # rand_cs = params_to_cluster_centers(rand_params)
     iter_accs = []
     j = 0
+    prev_state_latents = None
     for (state, params) in state_params_list:
       guess_mat = params_to_matrix(params)
-      r, dist = rotation_invariant_dist(guess_mat, rand_mat)
-      print dist
-      print guess_mat * r
       # cs = params_to_cluster_centers(params)
       if j > 1:
-        print gaussian_kl(matrix_to_gaussian(rand_mat), matrix_to_gaussian(guess_mat))
+        print guess_mat
+        print 'kl', gaussian_kl(matrix_to_gaussian(rand_mat), matrix_to_gaussian(guess_mat))
         varvals = state_to_varvals(state)
         state_latents = [freeze_value(samp[0], varvals) for samp in samples]
+        if prev_state_latents:
+          count_diffs = float(len([s for (s, s2) in zip(state_latents, prev_state_latents) if s != s2])) / len(state_latents)
+          print count_diffs
+        # print state_latents
+        prev_state_latents = state_latents
         # acc = cluster_assignment_accuracy(true_latents, state_latents)
         # iter_accs.append(acc)
       j += 1

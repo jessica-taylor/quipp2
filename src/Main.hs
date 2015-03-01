@@ -124,7 +124,7 @@ pyInitEM templ = do
 pyStepEM :: FactorGraphTemplate Value -> FST -> IO FST
 pyStepEM templ (state, params) = sampleRVar $ do
   let factorGraph = instantiateTemplate templ params
-  newStates <- sampleRVarTWith (\(Just x) -> return x) $ iterateM 10 (stepMH factorGraph) state
+  newStates <- sampleRVarTWith (\(Just x) -> return x) $ iterateM 20 (stepMH factorGraph) state
   let params' = updateTemplateParams templ params [(1.0, s) | s <- takeEvery 1 (tail newStates)]
   return (last newStates, params')
 

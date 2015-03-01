@@ -1,4 +1,4 @@
-{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TupleSections, RankNTypes, NoMonomorphismRestriction, ViewPatterns #-}
 
 module Quipp.Factor (
   Factor(Factor, factorExpFams, factorLogValue, factorNatParam, factorBayesNetOutput),
@@ -22,7 +22,7 @@ import Data.Map (Map, (!))
 import qualified Data.Map as Map
 import Data.Maybe (fromJust)
 import Data.Random (RVar, normal)
-import Numeric.AD (grad)
+import Numeric.AD (grad, diff)
 
 import Quipp.Value
 import Quipp.ExpFam
@@ -71,6 +71,13 @@ constFactor ss x = Factor {
 
 
 
+getFeatureMessage :: ExpFam a -> (forall b. RealFloat b => [b] -> b) -> [Double] -> [Double]
+getFeatureMessage (expFamName -> "gaussian") f [x] = [d - d2 * x, d2 / 2]
+  where f' = f . (:[])
+        d = diff f' x
+        d2 = diff (diff f') x
+getFeatureMessage (expFamName -> "categorical") f x = grad f x
+
 -- TODO: something is fishy here.  Things get flipped when they shouldn't.
 expFamFactor :: ExpFam v -> [ExpFam v] -> Params Double -> Factor v
 expFamFactor ef argExpFams eta@(etaBase, etaWeights) =
@@ -87,8 +94,15 @@ expFamFactor ef argExpFams eta@(etaBase, etaWeights) =
           let gradProbNp = grad (\np -> dotProduct np (map fromDouble ss) - expFamG ef np) $ getNatParam ef eta feats
               minFeatureIndex = sum $ map expFamFeaturesD $ take (n-1) argExpFams
               thisArgDim = expFamFeaturesD (argExpFams !! (n-1))
-              relevantWeights = map (take thisArgDim . drop minFeatureIndex) etaWeights
-          in expFamFeaturesToSufStat (argExpFams !! (n-1)) $ matMulByVector (transpose relevantWeights) gradProbNp
+              probFromFeats :: RealFloat a => [a] -> a
+              probFromFeats feats' =
+                expFamLogProbability ef (mapParams fromDouble eta)
+                  (map fromDouble (take minFeatureIndex feats) ++ feats' ++ map fromDouble (drop (minFeatureIndex + thisArgDim) feats)) (map fromDouble ss)
+
+              -- relevantWeights = map (take thisArgDim . drop minFeatureIndex) etaWeights
+          -- TODO grad is wrong
+          in getFeatureMessage (argExpFams !! (n-1)) probFromFeats (take thisArgDim $ drop minFeatureIndex feats)
+          -- expFamFeaturesToSufStat (argExpFams !! (n-1)) $ matMulByVector (transpose relevantWeights) gradProbNp
 
 listInsertAt :: Int -> a -> [a] -> [a]
 listInsertAt i x l = take i l ++ [x] ++ drop (i+1) l
