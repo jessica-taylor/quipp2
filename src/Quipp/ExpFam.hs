@@ -1,6 +1,6 @@
-{-# LANGUAGE RankNTypes, TypeFamilies, NoMonomorphismRestriction, ScopedTypeVariables #-}
+{-# LANGUAGE RankNTypes, TypeFamilies, NoMonomorphismRestriction, ScopedTypeVariables, ViewPatterns #-}
 
-module Quipp.ExpFam (ExpFam(ExpFam, expFamName, expFamD, expFamSufStat, expFamG, expFamSample, expFamRandomNatParam),
+module Quipp.ExpFam (ExpFam(ExpFam, expFamName, expFamD, expFamSufStat, expFamG, expFamSample, expFamDefaultNatParam, expFamRandomNatParam),
                      expFamFeaturesD, expFamSufStatToFeatures, expFamFeaturesToSufStat,
                      expFamSufStatToLikelihood, expFamCrossEntropy,
                      getNatParam,
@@ -10,7 +10,8 @@ module Quipp.ExpFam (ExpFam(ExpFam, expFamName, expFamD, expFamSufStat, expFamG,
                      likelihoodLogProbability,
                      timesLikelihood, productLikelihoods,
                      sampleLikelihood, expSufStat, covarianceSufStat,
-                     gaussianExpFam, categoricalExpFam) where
+                     gaussianExpFam, categoricalExpFam,
+                     expFamEntropy) where
 
 import Debug.Trace
 import Control.Monad (liftM, zipWithM)
@@ -33,6 +34,7 @@ data ExpFam v = ExpFam {
   expFamG :: forall s. RealFloat s => [s] -> s,
   expFamSufStatToLikelihood :: [Double] -> Likelihood v,
   expFamSample :: [Double] -> RVar v,
+  expFamDefaultNatParam :: [Double],
   expFamRandomNatParam :: RVar [Double],
   expFamFeaturesMask :: [Bool]
 }
@@ -66,6 +68,7 @@ promoteExpFam (f, finv) ef = ExpFam {
   expFamSufStatToLikelihood = fmap f . expFamSufStatToLikelihood ef,
   expFamSample = liftM f . expFamSample ef,
   expFamRandomNatParam = expFamRandomNatParam ef,
+  expFamDefaultNatParam = expFamDefaultNatParam ef,
   expFamFeaturesMask = expFamFeaturesMask ef
 }
 
@@ -150,6 +153,15 @@ sampleVariances xs = (var snd3, var thd3)
         var f = map normalize $ zipWith (-) (map (^2) (ev f id)) (ev f (^2))
         ev f g = foldl1 (zipWith (+)) [scaleVec (fst3 x / totWeight) (map g $ f x) | x <- xs]
 
+sampleVariancesWithVar :: [(Double, [Double], [Double], [Double], [Double])] -> ([Double], [Double])
+sampleVariancesWithVar xs = (var $ \(_,a,_,_,_) -> a, var $ \(_,_,_,a,_) -> a)
+  where totWeight = sum [w | (w, _, _, _, _) <- xs]
+        minVar = 0.00001
+        -- normalize handles NaN too
+        normalize x = if x >= minVar then x else minVar
+        var f = map normalize $ zipWith (-) (map (^2) (ev f id)) (ev f (^2))
+        ev f g = foldl1 (zipWith (+)) [scaleVec (w / totWeight) (map g $ f x) | x@(w, _, _, _, _) <- xs]
+
 -- normalize entry for feature a, suf stat b, by stdev(b) / stdev(a)
 -- that is, regularization factor is proportional to stdev(a) / stdev(b)
   
@@ -178,6 +190,39 @@ expFamMLE fam samples etaStart = -- trace ("\nexpFamMLE " ++ show samples) $
               baseReg ns = squareMagnitude $ zipWith (/) ns (map (fromDouble . sqrt) yvars)
               featReg ns = squareMagnitude $ zipWith (*) (concat ns) [sqrt (fromDouble xv / fromDouble yv) | yv <- expFamSufStatToFeatures fam yvars, xv <- xvars]
   in map (vectorToParams fam) $ newtonMethod (\eta -> (f eta, grad f eta, hessian f eta)) $ paramsToVector etaStart
+
+quadApprox :: RealFloat m => (forall n. RealFloat n => [n] -> n) -> [m] -> (m, [m], Matrix m)
+quadApprox f x =
+  let value = f x
+      grd = grad f x
+      hess = hessian f x
+  in (value, grd, map (map (2*)) hess)
+
+expectationWithVariances :: RealFloat m => (forall n. RealFloat n => [n] -> n) -> [m] -> [m] -> m
+expectationWithVariances f ex varx =
+  let fex = f ex
+      hess = hessian f ex
+  in fex + 0.5 * dotProduct varx (diagEntries hess)
+  
+
+-- expFamVarMLE :: ExpFam a -> [(Double, [Double], [Double], [Double], [Double])] -> Params Double -> [Params Double]
+-- expFamVarMLE fam samples etaStart = -- trace ("\nexpFamMLE " ++ show samples) $
+--   let (_, length -> numxs, _, length -> numys, _) = head samples
+--       -- samples' = groupSamplesByFeatures samples
+--       (xvars, yvars) = sampleVariancesWithVar samples
+--       probData :: RealFloat m => [m] -> [m] -> m
+--       probData eta xsys = expFamLogProbability fam (vectorToParams fam eta) xs ys
+--         where (xs, ys) = splitAt numxs xsys
+--       sampleProb :: RealFloat m => [m] -> (Double, [Double], [Double], [Double], [Double]) -> m
+--       sampleProb eta (weight, exs, varxs, eys, varys) =
+--         fromDouble weight * expectationWithVariances (probData eta) (map fromDouble $ exs ++ eys) (map fromDouble $ varxs ++ varys)
+-- 
+--       f :: RealFloat m => [m] -> m
+--       f eta = -baseReg (fst params) - featReg (snd params) + sum (map (sampleProb eta) samples)
+--         where params = vectorToParams fam eta
+--               baseReg ns = squareMagnitude $ zipWith (/) ns (map (fromDouble . sqrt) yvars)
+--               featReg ns = squareMagnitude $ zipWith (*) (concat ns) [sqrt (fromDouble xv / fromDouble yv) | yv <- expFamSufStatToFeatures fam yvars, xv <- xvars]
+--   in map (vectorToParams fam) $ newtonMethod (\eta -> (f eta, grad f eta, hessian f eta)) $ paramsToVector etaStart
 
 expFamMH :: ExpFam a -> [(Double, [Double], [Double])] -> Params Double -> RVar [Params Double]
 expFamMH fam samples etaStart =
@@ -239,15 +284,15 @@ expFamCrossEntropy ef _ (KnownValue q) = infinity
 -- E_P(-log Q(X)) = E_P(g(eta_Q) - eta_Q * phi(X)) = g(eta_Q) - eta_Q * E_P(phi(X))
 expFamCrossEntropy ef p (NatParam q) = expFamG ef q - dotProduct q (expSufStat ef p)
 
--- expFamEntropy :: Eq v => ExpFam v -> Likelihood v -> Double
--- expFamEntropy ef l = expFamCrossEntropy ef l l
+expFamEntropy :: Eq v => ExpFam v -> Likelihood v -> Double
+expFamEntropy ef l = expFamCrossEntropy ef l l
 -- 
 -- -- KL(P || Q) = H(P) - E_P(-log Q(X))
 -- expFamKLDivergence :: Eq v => ExpFam v -> Likelihood v -> Likelihood v -> Double
 -- expFamKLDivergence ef p q = expFamEntropy p - expFamCrossEntropy p q
 
-mkExpFam :: String -> [v -> Double] -> (forall s. RealFloat s => [s] -> s) -> ([Double] -> Likelihood v) -> ([Double] -> RVar v) -> RVar [Double] -> [Bool] -> ExpFam v
-mkExpFam name fs g like sample np mask = ExpFam {
+mkExpFam :: String -> [v -> Double] -> (forall s. RealFloat s => [s] -> s) -> ([Double] -> Likelihood v) -> ([Double] -> RVar v) -> RVar [Double] -> [Double] -> [Bool] -> ExpFam v
+mkExpFam name fs g like sample np npd mask = ExpFam {
   expFamName = name,
   expFamD = length fs,
   expFamSufStat = \v -> map ($ v) fs,
@@ -255,11 +300,12 @@ mkExpFam name fs g like sample np mask = ExpFam {
   expFamSufStatToLikelihood = like,
   expFamSample = sample,
   expFamRandomNatParam = np,
+  expFamDefaultNatParam = npd,
   expFamFeaturesMask = mask
 }
 
 gaussianExpFam :: ExpFam Double
-gaussianExpFam = mkExpFam "gaussian" [id, (^2)] g like sample randParam [True, False]
+gaussianExpFam = mkExpFam "gaussian" [id, (^2)] g like sample randParam [0.0, -0.001] [True, False]
   where g :: RealFloat a => [a] -> a
         g [n1, n2] | n2 >= 0 = 0/0
                    | otherwise = let variance = -1 / (2 * n2)
@@ -280,7 +326,7 @@ gaussianExpFam = mkExpFam "gaussian" [id, (^2)] g like sample randParam [True, F
         sample other = error (show other)
 
 categoricalExpFam :: Int -> ExpFam Int
-categoricalExpFam n = mkExpFam ("categorical " ++ show n) (map ss [1 .. n-1]) g like sample randParam (replicate (n-1) True)
+categoricalExpFam n = mkExpFam ("categorical " ++ show n) (map ss [1 .. n-1]) g like sample randParam (replicate (n-1) 0) (replicate (n-1) True)
   where ss i x = if x == i then 1.0 else 0.0
         g :: RealFloat a => [a] -> a
         g x | length x == n-1 = logSumExp (0:x)

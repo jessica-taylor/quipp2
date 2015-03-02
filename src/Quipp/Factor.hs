@@ -76,7 +76,11 @@ getFeatureMessage (expFamName -> "gaussian") f [x] = [d - d2 * x, d2 / 2]
   where f' = f . (:[])
         d = diff f' x
         d2 = diff (diff f') x
-getFeatureMessage ef f x | "categorical" `isPrefixOf` expFamName ef = grad f x
+-- getFeatureMessage ef f x | "categorical" `isPrefixOf` expFamName ef = grad f x
+getFeatureMessage ef f x | "categorical" `isPrefixOf` expFamName ef =
+  let n = length x + 1
+      values = [f [if j == i then 1.0 else 0.0 | j <- [1 .. n - 1]] | i <- [0 .. n - 1]]
+  in map (\x -> x - head values) (tail values)
 getFeatureMessage ef f x = error $ "Bad expfam and features: " ++ expFamName ef ++ ", " ++ show x
 
 -- TODO: something is fishy here.  Things get flipped when they shouldn't.
@@ -92,8 +96,7 @@ expFamFactor ef argExpFams eta@(etaBase, etaWeights) =
   where expSufStatAndFeatures (likelihood:argsLikelihoods) = (expSufStat ef likelihood, concat [expFamSufStatToFeatures aef (expSufStat aef l) | (l, aef) <- zip argsLikelihoods argExpFams])
         fnp 0 (_, feats) = getNatParam ef eta feats
         fnp n (ss, feats) =
-          let gradProbNp = grad (\np -> dotProduct np (map fromDouble ss) - expFamG ef np) $ getNatParam ef eta feats
-              minFeatureIndex = sum $ map expFamFeaturesD $ take (n-1) argExpFams
+          let minFeatureIndex = sum $ map expFamFeaturesD $ take (n-1) argExpFams
               thisArgDim = expFamFeaturesD (argExpFams !! (n-1))
               probFromFeats :: RealFloat a => [a] -> a
               probFromFeats feats' =

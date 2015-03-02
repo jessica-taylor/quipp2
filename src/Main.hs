@@ -1,13 +1,15 @@
-{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleInstances, NoMonomorphismRestriction, ScopedTypeVariables #-}
 module Main where
 
 import Debug.Trace (trace, traceShow)
-import Control.Monad (liftM)
+import Control.Monad (liftM, replicateM)
 import Control.Applicative ((<$>), (<*>))
 import Data.Map (Map, (!))
 import qualified Data.Map as Map
 import System.Environment (getArgs)
 import qualified Text.JSON as JSON
+import Data.Maybe (fromJust)
+import Data.Random (RVarT, RVar)
 
 import Quipp.BayesNet
 import Quipp.ExpFam
@@ -44,40 +46,34 @@ infixl 9 !:
     JSON.Error str -> error $ "Error looking up " ++ key ++ " in " ++ show obj ++ ": " ++ str
 other !: key = error ("Not object: " ++ show other)
 
-decodeTemplate :: String -> FactorGraphTemplate Value
-decodeTemplate str = makeFactorGraphTemplate
-    (map convVar (m !: "vars"))
-    (zip1_2 [0..] $ map convRandFun (m !: "randFuns"))
-    (zip1_2 [0..] $ map convFactor (m !: "factors"))
-  where m = decodeJSON str
-        convVar (i, ef) = (i, decodeExpFam ef)
-        convRandFun rf =
-          (decodeExpFam (rf !: "resExpFam"),
-           map decodeExpFam (rf !: "argExpFams"))
-        convFactor fac =
-          let facinfo = fac !: "factor" in
-          (case facinfo !: "type" of
-             "randFun" -> Right (facinfo !: "id")
-             "uniformCategorical" ->
-               let n = facinfo !: "n" in
-               Left $ expFamFactor (categoricalValueExpFam n) [] (replicate (n - 1) 0.0, replicate (n-1) [])
-             "normal" ->
-               let mean = facinfo !: "mean"
-                   stdev = facinfo !: "stdev"
-              in Left $ expFamFactor gaussianValueExpFam [] ([mean / stdev^2, -1 / (2 * stdev^2)], [[]])
-             "constant" -> Left $ constFactor (decodeExpFam (facinfo !: "expFam")) $ case facinfo !: "expFam" !: "type" of
-               "gaussian" -> DoubleValue (facinfo !: "value")
-               "bernoulli" -> BoolValue (facinfo !: "value")
-               "categorical" -> CategoricalValue (facinfo !: "value")
-             other -> error $ "Unknown factor type: " ++ other
+instance JSON.JSON (FactorGraphTemplate Value) where
+  readJSON m = return $ makeFactorGraphTemplate
+      (map convVar (m !: "vars"))
+      (zip1_2 [0..] $ map convRandFun (m !: "randFuns"))
+      (zip1_2 [0..] $ map convFactor (m !: "factors"))
+    where convVar (i, ef) = (i, decodeExpFam ef)
+          convRandFun rf =
+            (decodeExpFam (rf !: "resExpFam"),
+             map decodeExpFam (rf !: "argExpFams"))
+          convFactor fac =
+            let facinfo = fac !: "factor" in
+            (case facinfo !: "type" of
+               "randFun" -> Right (facinfo !: "id")
+               "uniformCategorical" ->
+                 let n = facinfo !: "n" in
+                 Left $ expFamFactor (categoricalValueExpFam n) [] (replicate (n - 1) 0.0, replicate (n-1) [])
+               "normal" ->
+                 let mean = facinfo !: "mean"
+                     stdev = facinfo !: "stdev"
+                in Left $ expFamFactor gaussianValueExpFam [] ([mean / stdev^2, -1 / (2 * stdev^2)], [[]])
+               "constant" -> Left $ constFactor (decodeExpFam (facinfo !: "expFam")) $ case facinfo !: "expFam" !: "type" of
+                 "gaussian" -> DoubleValue (facinfo !: "value")
+                 "bernoulli" -> BoolValue (facinfo !: "value")
+                 "categorical" -> CategoricalValue (facinfo !: "value")
+               other -> error $ "Unknown factor type: " ++ other
 
-           , fac !: "argVarIds")
-
-decodeParams :: String -> FactorGraphParams
-decodeParams = decodeJSON
-
-encodeParams :: FactorGraphParams -> String
-encodeParams = JSON.encode
+             , fac !: "argVarIds")
+  showJSON _ = undefined
 
 makeJSObject :: [(String, JSON.JSValue)] -> JSON.JSValue
 makeJSObject = JSON.JSObject . JSON.toJSObject
@@ -100,12 +96,6 @@ instance JSON.JSON (Likelihood Value) where
   showJSON (NatParam np) = JSON.showJSON (Right np :: Either Value [Double])
 
 
-decodeState :: String -> FactorGraphState Value
-decodeState = decodeJSON
-
-encodeState :: FactorGraphState Value -> String
-encodeState = JSON.encode
-
 pyRandTemplateParams :: FactorGraphTemplate Value -> IO FactorGraphParams
 pyRandTemplateParams templ = sampleRVar $ randTemplateParams 10.0 templ
 
@@ -120,50 +110,88 @@ pyInitEM templ = do
   params <- sampleRVar $ randTemplateParams 0.001 templ
   return (initFactorGraphState (instantiateTemplate templ params), params)
 
+estimateVariationalDistrs :: FactorGraph Value -> [FactorGraphState Value] -> FactorGraphState Value
+estimateVariationalDistrs graph states = Map.mapWithKey f (factorGraphVars graph)
+  where initParam ef = (expFamDefaultNatParam ef, replicate (expFamFeaturesD ef) [])
+        f k (ef, _) = NatParam $ fst (expFamMLE ef [(1.0, [], expSufStat ef (state ! k)) | state <- states] (initParam ef) !! 10)
 
-pyStepEM :: FactorGraphTemplate Value -> FST -> IO FST
-pyStepEM templ (state, params) = sampleRVar $ do
+sampleState :: FactorGraph Value -> FactorGraphState Value -> RVar (FactorGraphState Value)
+sampleState graph = liftM Map.fromList . mapM sampleVar . Map.toList
+  where sampleVar (v, like) = do
+          value <- sampleLikelihood (fst (factorGraphVars graph ! v)) like
+          return (v, KnownValue value)
+
+stateEntropy :: FactorGraph Value -> FactorGraphState Value -> Double
+stateEntropy graph state = traced "entropy" $ sum [expFamEntropy ef (state ! k) | (k, (ef, _)) <- Map.toList (factorGraphVars graph)]
+
+stateLogProb :: FactorGraph Value -> FactorGraphState Value -> RVar Double
+stateLogProb graph state = do
+  stateSamps <- replicateM 20 (sampleState graph state)
+  let stateScore state = sum [factorLogValue fac (map (state !) vars) | (_, (fac, vars)) <- Map.toList (factorGraphFactors graph)]
+  return $ traced "logProb" $ mean $ map stateScore stateSamps
+
+-- pyStepEM :: FactorGraphTemplate Value -> FST -> IO (FST, Double)
+-- pyStepEM templ (state, params) = sampleRVar $ do
+--   let factorGraph = instantiateTemplate templ params
+--   newStates <- sampleRVarTWith (\(Just x) -> return x) $ iterateM 20 (stepMH factorGraph) state
+--   -- TODO interleaving
+--   let q = estimateVariationalDistrs factorGraph newStates
+--   let score = stateLogProb factorGraph q + stateEntropy factorGraph q
+--   let params' = updateTemplateParams templ params [(1.0, s) | s <- takeEvery 1 (tail newStates)]
+--   return ((last newStates, params'), score)
+
+pyScore :: FactorGraphTemplate Value -> FST -> IO Double
+pyScore templ (state, params) = do
   let factorGraph = instantiateTemplate templ params
-  newStates <- sampleRVarTWith (\(Just x) -> return x) $ iterateM 20 (stepMH factorGraph) state
-  let params' = updateTemplateParams templ params [(1.0, s) | s <- takeEvery 1 (tail newStates)]
-  return (last newStates, params')
+  logProb <- sampleRVar $ stateLogProb factorGraph state
+  let score = logProb + stateEntropy factorGraph state
+  return score
 
+pyInferState :: FactorGraphTemplate Value -> Int -> FST -> IO (FactorGraphState Value)
+pyInferState templ iters (state, params) = do
+  let factorGraph = instantiateTemplate templ params
+  return $ iterate (fromJust . stepVmp factorGraph) state !! iters
 
-readTemplate :: String -> IO (FactorGraphTemplate Value)
-readTemplate f = decodeTemplate <$> readFile f
+pyInferParams :: FactorGraphTemplate Value -> FST -> IO FactorGraphParams
+pyInferParams templ (state, params) = sampleRVar $ do
+  let factorGraph = instantiateTemplate templ params
+  stateSamps <- replicateM 20 (sampleState factorGraph state)
+  return $ updateTemplateParams templ params [(1.0, s) | s <- stateSamps]
 
-readParams :: String -> IO FactorGraphParams
-readParams f = decodeParams <$> readFile f
+pyStepEM' :: FactorGraphTemplate Value -> FST -> IO FST
+pyStepEM' templ (state, params) = sampleRVar $ do
+  let factorGraph = instantiateTemplate templ params
+  let newState = iterate (fromJust . stepVmp factorGraph) state !! 10
+  -- TODO interleaving
+  -- let score = stateLogProb factorGraph newState + stateEntropy factorGraph newState
+  stateSamps <- sampleRVar $ replicateM 20 (sampleState factorGraph newState)
+  let params' = updateTemplateParams templ params [(1.0, s) | s <- stateSamps]
+  -- return ((last stateSamps, params'), score)
+  return (newState, params')
 
-writeParams :: String -> FactorGraphParams -> IO ()
-writeParams f params = writeFile f (encodeParams params)
-
-readState :: String -> IO (FactorGraphState Value)
-readState f = decodeState <$> readFile f
-
-writeState :: String -> FactorGraphState Value -> IO ()
-writeState f state = writeFile f (encodeState state)
 
 main = do
-  args <- getArgs
-  case args of
-    ["randTemplateParams", templateFile, paramsFile] ->
-      readTemplate templateFile >>= pyRandTemplateParams >>= writeParams paramsFile
-    ["sampleBayesNet", templateFile, paramsFile, stateFile] -> do
-      templ <- readTemplate templateFile
-      params <- readParams paramsFile
-      pySampleBayesNet templ params >>= writeState stateFile
-    ["initEM", templateFile, stateFile, paramsFile] -> do
-      templ <- readTemplate templateFile
-      (state, params) <- pyInitEM templ
-      writeState stateFile state
-      writeParams paramsFile params
-    ["stepEM", templateFile, stateFile, paramsFile] -> do
-      templ <- readTemplate templateFile
-      state <- readState stateFile
-      params <- readParams paramsFile
-      (state', params') <- pyStepEM templ (state, params)
-      writeState stateFile state'
-      writeParams paramsFile params'
-    _ -> error ("Bad command " ++ show args)
+  [command] <- getArgs
+  argsString <- getContents
+  let args = decodeJSON argsString
+  outputText <- case command of
+    "randTemplateParams" -> do
+      let [templ] = args
+      liftM JSON.encode (pyRandTemplateParams templ)
+    "sampleBayesNet" -> do
+      let (templ :: FactorGraphTemplate Value, params :: FactorGraphParams) = args
+      liftM JSON.encode (pySampleBayesNet templ params)
+    "initEM" -> do
+      let [templ :: FactorGraphTemplate Value] = args
+      liftM JSON.encode (pyInitEM templ)
+    "inferState" -> do
+      let (templ :: FactorGraphTemplate Value, state :: FactorGraphState Value, params :: FactorGraphParams, iters :: Int) = args
+      liftM JSON.encode (pyInferState templ iters (state, params))
+    "inferParams" -> do
+      let (templ :: FactorGraphTemplate Value, state :: FactorGraphState Value, params :: FactorGraphParams) = args
+      liftM JSON.encode (pyInferParams templ (state, params))
+    "score" -> do
+      let (templ :: FactorGraphTemplate Value, state :: FactorGraphState Value, params :: FactorGraphParams) = args
+      liftM JSON.encode (pyScore templ (state, params))
+  putStr outputText
 

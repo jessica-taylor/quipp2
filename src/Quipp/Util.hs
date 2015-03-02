@@ -125,8 +125,17 @@ linSolve :: Matrix Double -> [Double] -> [Double]
 linSolve mat d =
   matMulByVector (Mat.toLists $ pinv $ Mat.fromLists mat) d
 
+diagEntries :: Matrix a -> [a]
+diagEntries m
+  | length m == 0 || length m == length (head m) =
+    zipWith (!!) m [0..]
+  | otherwise = error $ "Cannot get diagonal entries of non-square matrix " ++ show (length m, length (head m))
+
 fromDouble :: Fractional a => Double -> a
 fromDouble = fromRational . toRational
+
+toDouble :: Real a => a -> Double
+toDouble = fromRational . toRational
 
 {- f(x) = ax^2 + bx + c
  - f'(x) = 2ax + b
@@ -152,3 +161,4 @@ variance xs = sum [(x-m)^2 | x <- xs] / fromIntegral (length xs) where m = mean 
 covariance xys = sum [(x - ux) * (y - uy) | (x, y) <- xys] / fromIntegral (length xys)
   where ux = mean (map fst xys)
         uy = mean (map snd xys)
+

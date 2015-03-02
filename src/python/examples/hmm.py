@@ -2,7 +2,7 @@ from quipp import *
 
 
 def run():
-  num_states = 3
+  num_states = 4
   num_observations = 3
 
   StateType = Categorical(num_states)

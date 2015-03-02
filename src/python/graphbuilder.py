@@ -312,18 +312,24 @@ def conditioned_network(state, typ, sampler, frozen_samps):
     state.unify_values(get_type(s), s, unfrozen)
   return [latent for (latent, _) in samples]
 
-def infer_parameters_from_samples(graph_state, samples, frozen_samples):
+def condition_on_frozen_samples(graph_state, samples, frozen_samples):
   for s,f in zip(samples, frozen_samples):
     typ = get_type(s[1])
     graph_state.unify_values(typ, s[1], typ.unfreeze(graph_state, f))
-  templ = graph_state.to_JSON()
+  return graph_state.to_JSON()
+
+def infer_states_and_parameters(templ):
   (state, params) = hs_init_em(templ)
-  yield (state, params)
+  state = hs_infer_state(templ, state, params)
+  score = hs_score(templ, state, params)
+  yield (state, params, score)
   i = 0
   while True:
     print 'iter', i
-    (state, params) = hs_step_em(templ, state, params)
-    yield (state, params)
+    params = hs_infer_params(templ, state, params)
+    state = hs_infer_state(templ, state, params)
+    score = hs_score(templ, state, params)
+    yield (state, params, score)
     i += 1
 
 def translate_params_for_fn(params):
@@ -386,17 +392,20 @@ def run_clustering_example(run):
     frozen_samples = [freeze_value(samp, varvals) for samp in samples]
     true_latents = [x[0] for x in frozen_samples]
     print true_latents
-    state_params_list = infer_parameters_from_samples(current_graph_state, samples, [x[1] for x in frozen_samples])
+    templ = condition_on_frozen_samples(current_graph_state, samples, [x[1] for x in frozen_samples])
+    print 'best score', params_score(templ, rand_params)
+    state_params_list = infer_states_and_parameters(templ)
     rand_cs = params_to_cluster_centers(rand_params)
     iter_accs = []
     j = 0
-    for (state, params) in state_params_list:
+    for (state, params, score) in state_params_list:
+      print 'score', score
       cs = params_to_cluster_centers(params)
-      if j > 1:
-        varvals = state_to_varvals(state)
-        state_latents = [freeze_value(samp[0], varvals) for samp in samples]
-        acc = cluster_assignment_accuracy(true_latents, state_latents)
-        iter_accs.append(acc)
+      # if j > 1:
+      #   varvals = state_to_varvals(state)
+      #   state_latents = [freeze_value(samp[0], varvals) for samp in samples]
+      #   acc = cluster_assignment_accuracy(true_latents, state_latents)
+      #   iter_accs.append(acc)
       j += 1
     accs.append(iter_accs)
   print map(mean, zip(*accs))
@@ -444,6 +453,11 @@ def rotation_invariant_dist(A, B):
 
 # IDEA: compute Gaussian from factors, KL divergence!
 
+def params_score(templ, params):
+  (state, _) = hs_init_em(templ)
+  state = hs_infer_state(templ, state, params, iters=10)
+  return hs_score(templ, state, params)
+
 def run_factor_analysis_example(run):
   global current_graph_state
   n = 200
@@ -460,30 +474,61 @@ def run_factor_analysis_example(run):
     frozen_samples = [freeze_value(samp, varvals) for samp in samples]
     true_latents = [x[0] for x in frozen_samples]
     # print true_latents
-    state_params_list = infer_parameters_from_samples(current_graph_state, samples, [x[1] for x in frozen_samples])
+    templ = condition_on_frozen_samples(current_graph_state, samples, [x[1] for x in frozen_samples])
+    print 'best score', params_score(templ, rand_params)
+    state_params_list = infer_states_and_parameters(templ)
     # rand_cs = params_to_cluster_centers(rand_params)
     iter_accs = []
     j = 0
-    prev_state_latents = None
-    for (state, params) in state_params_list:
+    for (state, params, score) in state_params_list:
+      print 'score', score
       guess_mat = params_to_matrix(params)
       # cs = params_to_cluster_centers(params)
       if j > 1:
         print guess_mat
         print 'kl', gaussian_kl(matrix_to_gaussian(rand_mat), matrix_to_gaussian(guess_mat))
-        varvals = state_to_varvals(state)
-        state_latents = [freeze_value(samp[0], varvals) for samp in samples]
-        if prev_state_latents:
-          count_diffs = float(len([s for (s, s2) in zip(state_latents, prev_state_latents) if s != s2])) / len(state_latents)
-          print count_diffs
-        # print state_latents
-        prev_state_latents = state_latents
-        # acc = cluster_assignment_accuracy(true_latents, state_latents)
-        # iter_accs.append(acc)
+        print 'rid', rotation_invariant_dist(rand_mat[1], guess_mat[1])
       j += 1
 
     # accs.append(iter_accs)
   # print map(mean, zip(*accs))
+
+def get_transition_matrix(params):
+  base, mat = params
+  rows = []
+  for i in range(1 + len(mat[0])):
+    if i == 0:
+      logodds = [0.0] + base
+    else:
+      logodds = [0.0] + [b + m[i-1] for (b,m) in zip(base, mat)]
+    probs = list(map(math.exp, logodds))
+    sum_probs = sum(probs)
+    rows.append([p / sum_probs for p in probs])
+  return rows
+
+
+def hmm_parameters(params):
+  return (get_transition_matrix(params[0][1]), get_transition_matrix(params[1][1]))
+
+def matrix_dist(m1, m2):
+  return linalg.norm(np.matrix(m1) - np.matrix(m2))**2
+
+def permute_rows(perm, mat):
+  return [mat[i] for i in perm]
+
+def permute_cols(perm, mat):
+  return [[r[i] for i in perm] for r in mat]
+
+def hmm_parameters_dist(tms1, tms2):
+  (tm1, om1) = tms1
+  (tm2, om2) = tms2
+  perms_and_dists = []
+  for perm in itertools.permutations(range(len(tm1))):
+    tm2p = permute_rows(perm, permute_cols(perm, tm2))
+    om2p = permute_rows(perm, om2)
+    perms_and_dists.append((perm, matrix_dist(tm1, tm2p) + matrix_dist(om1, om2p)))
+  return min(perms_and_dists, key=lambda x: x[1])
+
 
 def run_hmm_example(run):
   global current_graph_state
@@ -495,22 +540,28 @@ def run_hmm_example(run):
     samples = [sampler() for i in range(n)]
     templ = current_graph_state.to_JSON()
     rand_params = hs_rand_template_params(templ)
-    print rand_params
+    rand_hmm = hmm_parameters(rand_params)
+    print rand_hmm
     # rand_mat = params_to_matrix(rand_params)
     varvals = state_to_varvals(hs_sample_bayes_net(templ, rand_params))
     frozen_samples = [freeze_value(samp, varvals) for samp in samples]
     true_latents = [x[0] for x in frozen_samples]
     # print true_latents
-    state_params_list = infer_parameters_from_samples(current_graph_state, samples, [x[1] for x in frozen_samples])
+    templ = condition_on_frozen_samples(current_graph_state, samples, [x[1] for x in frozen_samples])
+    print 'best score', params_score(templ, rand_params)
+    state_params_list = infer_states_and_parameters(templ)
     # rand_cs = params_to_cluster_centers(rand_params)
     iter_accs = []
     j = 0
     prev_state_latents = None
-    for (state, params) in state_params_list:
+    for (state, params, score) in state_params_list:
+      print 'score', score
       # guess_mat = params_to_matrix(params)
       # cs = params_to_cluster_centers(params)
       if j > 1:
-        print params
+        inferred_hmm = hmm_parameters(params)
+        print inferred_hmm
+        print hmm_parameters_dist(rand_hmm, inferred_hmm)
         varvals = state_to_varvals(state)
         state_latents = [freeze_value(samp[0], varvals) for samp in samples]
         prev_state_latents = state_latents

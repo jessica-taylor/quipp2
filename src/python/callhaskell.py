@@ -66,54 +66,33 @@ def varvals_to_state(varvals):
   for k in varvals:
     s.append([k, {u'Left': varvals[k]}])
 
-
-def temp_file_name(prefix=''):
-    return '/tmp/' + prefix + '_' + str(uuid.uuid1())
-
-def run_hs(*args):
-    subprocess.call(['../../dist/build/quipp_main/quipp_main'] + list(args))
-
-def dump_template(templ):
-    templ_file = temp_file_name('template')
-    json.dump(templ, open(templ_file, 'w'))
-    return templ_file
-
-def dump_state(state):
-    state_file = temp_file_name('state')
-    json.dump(state, open(state_file, 'w'))
-    return state_file
-
-def dump_params(params):
-    params_file = temp_file_name('params')
-    json.dump(params, open(params_file, 'w'))
-    return params_file
-
-def load_contents(fname):
-  return json.load(open(fname))
+def run_hs(command, *args):
+    popen = subprocess.Popen(['../../dist/build/quipp_main/quipp_main', command], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    (output, _) = popen.communicate(json.dumps(list(args)))
+    return json.loads(output)
 
 def hs_rand_template_params(templ):
-    params_file = temp_file_name('params')
-    run_hs('randTemplateParams', dump_template(templ), params_file)
-    return load_contents(params_file)
+  return run_hs('randTemplateParams', templ)
 
 def hs_sample_bayes_net(templ, params):
-    state_file = temp_file_name('state')
-    run_hs('sampleBayesNet', dump_template(templ), dump_params(params), state_file)
-    return load_contents(state_file)
+  return run_hs('sampleBayesNet', templ, params)
 
 def hs_init_em(templ):
-    state_file = temp_file_name('state')
-    params_file = temp_file_name('params')
-    run_hs('initEM', dump_template(templ), state_file, params_file)
-    return (load_contents(state_file), load_contents(params_file))
+  return run_hs('initEM', templ)
 
-def hs_step_em(templ, state, params):
-    state_file = dump_state(state)
-    params_file = dump_params(params)
-    run_hs('stepEM', dump_template(templ), state_file, params_file)
-    return (load_contents(state_file), load_contents(params_file))
+def hs_infer_state(templ, state, params, iters=10):
+  return run_hs('inferState', templ, state, params, iters)
 
-__all__ = ['hs_rand_template_params', 'hs_sample_bayes_net', 'hs_init_em', 'hs_step_em', 'state_to_varvals', 'varvals_to_state']
+def hs_infer_params(templ, state, params):
+  return run_hs('inferParams', templ, state, params)
+
+# def hs_step_em(templ, state, params):
+#   return run_hs('stepEM', templ, state, params)
+
+def hs_score(templ, state, params):
+  return run_hs('score', templ, state, params)
+
+# __all__ = ['hs_rand_template_params', 'hs_sample_bayes_net', 'hs_init_em', 'hs_step_em', 'state_to_varvals', 'varvals_to_state']
 
 if __name__ == '__main__':
     print hs_init_em({'vars': [], 'randFuns': [], 'factors': []})

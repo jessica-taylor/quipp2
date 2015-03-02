@@ -445,3 +445,57 @@ no other symmetries?
   - would require it to be _impossible_ to determine states and observation
     distributions given infinite data
 therefore...compute best permutation?
+problem....distr might be close but this doesn't guarantee matrices are close
+
+
+-----
+
+parameter optimization with feature and value variances
+
+want to maximize E[log P(y | x; theta)]
+(like before but instead of (x,y) being from a categorical distribution, it's a mixture of products of varitional distributions)
+
+E[log P(y | x; theta)]
+= E[psi(X)^T N phi(Y) - g(N^Tpsi(X))]
+
+first term does not depend on variance of X and Y (because independent); just use means
+for second term, create quadratic approximation of g at the expectation
+
+E[g(eta)] ~= 
+
+f(eta) = eta^T A eta + b^T eta + c
+f'(eta) = 2 A eta + b
+f''(eta) = 2A
+
+f(mean_eta) = g(mean_eta)
+f'(mean_eta) = g'(mean_eta)
+<=>
+2A eta + b = g'(mean_eta)
+
+f''(mean_eta) = g''(mean_eta) <=> A = g''(mean_eta) / 2
+
+f'(mean_eta) = g'(mean_eta) <=> 2A mean_eta + b = g'(mean_eta)
+<=>
+g''(mean_eta) mean_eta + b = g'(mean_eta)
+<=>
+b = g'(mean_eta) - g''(mean_eta) mean_eta
+
+in other words:
+f(mean_eta + x) = g(mean_eta) + g'(mean_eta)^T x + 1/2  x^T g''(mean_eta) x
+
+
+
+f(x + y) = g(x) + g'(x)^T y + 1/2 y^T g''(x) y
+f(y) = g(x) + g'(x)^T (y - x) + 1/2 (y-x)^T g''(x) (y - x)
+= g(x) - 
+
+
+f(x) = x^T A x
+
+X ~ N(0, E)
+
+E[f(X)] = A * E
+
+
+
+
